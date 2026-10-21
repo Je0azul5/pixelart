@@ -7,8 +7,6 @@ final class AppModel {
     var settings = PixelSettings()
     var source: SourceImage?
     var result: PixelResult?
-    var preview: NSImage?
-    var patternPreview: NSImage?
     var original: NSImage?
     var busy = false
     var error: String?
@@ -18,16 +16,99 @@ final class AppModel {
     var patternMode = true
     var patternOptions = PatternOptions()
     var showOriginal = false
+    var tool = CellTool.pencil
+    var selectedColor = Color.black
+    var zoom = 1.0
+    var history = GridHistory()
+    private var restoredSettings: PixelSettings?
+
+    var paintColor: RGBA {
+        let color = NSColor(selectedColor).usingColorSpace(.sRGB) ?? .black
+        return RGBA(r: UInt8(clamping: Int((color.redComponent * 255).rounded())), g: UInt8(clamping: Int((color.greenComponent * 255).rounded())), b: UInt8(clamping: Int((color.blueComponent * 255).rounded())))
+    }
+
+    func settingsChanged(from old: PixelSettings) {
+        if settings == restoredSettings { restoredSettings = nil; return }
+        restoredSettings = nil
+        if old.width == settings.width, old.height == settings.height,
+           old.fit == settings.fit, old.flatColors == settings.flatColors,
+           old.smooth == settings.smooth, old.dither == settings.dither,
+           let result, settings.isValid, !busy, result.width == settings.width, result.height == settings.height {
+            let reduced = PixelEngine.reduce(result, limit: settings.colorCount)
+            replaceResult(reduced)
+        } else { render() }
+    }
+
+    private func replaceResult(_ new: PixelResult) {
+        guard var current = result, current.width == new.width, current.height == new.height else { return }
+        for row in 0..<current.height {
+            for column in 0..<current.width { history.set(new[row, column], row: row, column: column, in: &current) }
+        }
+        result = current
+        history.commit()
+    }
+
+    func select(_ color: RGBA) {
+        selectedColor = Color(red: Double(color.r) / 255, green: Double(color.g) / 255, blue: Double(color.b) / 255)
+    }
+
+    func edit(row: Int, column: Int, initial: Bool) {
+        guard !busy, settings.isValid, !showOriginal, var current = result,
+              row >= 0, row < current.height, column >= 0, column < current.width else { return }
+        switch tool {
+        case .eyedropper:
+            if initial {
+                let color = current[row, column]
+                if color.a > 0 { select(color); message = color.hex }
+                else { message = "Casilla vacía" }
+            }
+        case .pencil: history.set(paintColor, row: row, column: column, in: &current)
+        case .eraser: history.set(RGBA(r: 0, g: 0, b: 0, a: 0), row: row, column: column, in: &current)
+        case .fill:
+            if initial { history.fill(paintColor, row: row, column: column, in: &current) }
+        }
+        result = current
+    }
+
+    func endStroke() { history.commit() }
+    func undo() {
+        guard !busy, var current = result else { return }
+        history.undo(in: &current); result = current
+    }
+    func redo() {
+        guard !busy, var current = result else { return }
+        history.redo(in: &current); result = current
+    }
+    func replaceColor(_ color: RGBA) {
+        guard !busy, var current = result else { return }
+        for row in 0..<current.height {
+            for column in 0..<current.width where current[row, column] == color {
+                history.set(paintColor, row: row, column: column, in: &current)
+            }
+        }
+        result = current; history.commit()
+    }
+
+    func saveDocument() {
+        guard canExport, let result else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.jexelartPattern]
+        panel.nameFieldStringValue = "\(source?.name ?? "patron").jexelart"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try GridDocument(settings: settings, grid: result.grid, options: patternOptions).write(to: url)
+            message = "Patrón editable guardado"
+        } catch { self.error = error.localizedDescription }
+    }
     private var work: Task<Void, Never>?
     private var generation = UUID()
 
-    var canExport: Bool { result != nil && !busy && settings.isValid }
+    var canExport: Bool { result?.width == settings.width && result?.height == settings.height && !busy && settings.isValid }
     var minScale: Int { patternMode ? 8 : 1 }
     var maxScale: Int {
         let border = patternMode ? patternOptions.margin * 2 : 0
         return max(minScale, min(32, (8192 - border) / max(settings.width, settings.height, 1)))
     }
-    var displayedPreview: NSImage? { showOriginal ? original : (patternMode ? patternPreview : preview) }
     var exportDescription: String {
         guard settings.isValid else { return "Introduce dimensiones válidas" }
         let border = patternMode ? patternOptions.margin * 2 : 0
@@ -58,7 +139,7 @@ final class AppModel {
 
     func openImage() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = [.image, .json, .jexelartPattern]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "Abrir imagen"
@@ -67,6 +148,19 @@ final class AppModel {
     }
 
     func load(_ url: URL) {
+        if ["jexelart", "json"].contains(url.pathExtension.lowercased()) {
+            do {
+                let document = try GridDocument.read(from: url)
+                let restored = try document.validatedResult()
+                work?.cancel(); generation = UUID(); busy = false
+                source = nil; original = nil; showOriginal = false
+                restoredSettings = settings == document.settings ? nil : document.settings
+                settings = document.settings; patternOptions = document.options
+                result = restored; history = GridHistory(); zoom = 1
+                adjustScale(); message = "Patrón editable abierto"
+            } catch { self.error = error.localizedDescription }
+            return
+        }
         work?.cancel()
         let token = UUID(); generation = token
         busy = true; message = nil
@@ -76,9 +170,8 @@ final class AppModel {
                 guard generation == token, !Task.isCancelled else { return }
                 source = loaded
                 original = NSImage(cgImage: loaded.image, size: NSSize(width: loaded.image.width, height: loaded.image.height))
-                result = nil; preview = nil; patternPreview = nil
-                settings.width = min(512, max(1, settings.width))
-                settings.height = min(512, max(1, Int((Double(settings.width) * Double(loaded.image.height) / Double(loaded.image.width)).rounded())))
+                result = nil
+                history = GridHistory(); zoom = 1
                 render()
             } catch {
                 guard generation == token else { return }
@@ -90,26 +183,24 @@ final class AppModel {
     func render() {
         work?.cancel()
         let token = UUID(); generation = token
-        guard let source, settings.isValid else { busy = false; return }
+        guard settings.isValid else { busy = false; return }
+        let input: CGImage
+        if let source { input = source.image }
+        else if let result, let image = try? result.cgImage() { input = image }
+        else { busy = false; return }
         let options = settings
-        let pattern = patternOptions
         busy = true; message = nil
         adjustScale()
         work = Task {
             do {
                 try await Task.sleep(for: .milliseconds(180))
                 let task = Task.detached(priority: .userInitiated) {
-                    let converted = try PixelEngine.render(source: source.image, settings: options)
-                    let scale = max(2, min(20, 2048 / max(converted.width, converted.height)))
-                    let patternImage = try PatternRenderer.image(converted, cellSize: scale, options: pattern)
-                    return (converted, SourceImage(image: patternImage, name: "patrón"))
+                    try PixelEngine.render(source: input, settings: options)
                 }
-                let (converted, sheet) = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+                let converted = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
                 guard generation == token, !Task.isCancelled else { return }
-                let cg = try converted.cgImage()
                 result = converted
-                preview = NSImage(cgImage: cg, size: NSSize(width: converted.width, height: converted.height))
-                patternPreview = NSImage(cgImage: sheet.image, size: NSSize(width: sheet.image.width, height: sheet.image.height))
+                history = GridHistory()
                 busy = false
             } catch is CancellationError {
                 // A newer edit owns the preview now.

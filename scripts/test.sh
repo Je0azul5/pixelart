@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 mkdir -p .build/checks
 swiftc -swift-version 6 -parse-as-library \
     Sources/Pixelart/PixelEngine.swift \
+    Sources/Pixelart/GridDocument.swift \
+    Sources/Pixelart/AppModel.swift \
     Sources/Pixelart/ImageExporter.swift \
     Sources/Pixelart/PatternRenderer.swift \
     Tests/PixelEngineChecks.swift \

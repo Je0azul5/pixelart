@@ -1,7 +1,7 @@
 import AppKit
 import ImageIO
 
-struct RGBA: Hashable, Sendable {
+struct RGBA: Hashable, Sendable, Codable {
     var r: UInt8
     var g: UInt8
     var b: UInt8
@@ -16,11 +16,11 @@ struct PaletteColor: Identifiable, Sendable {
     var id: RGBA { color }
 }
 
-enum ImageFit: String, CaseIterable, Sendable {
+enum ImageFit: String, CaseIterable, Sendable, Codable {
     case fit = "Ajustar", fill = "Rellenar", stretch = "Estirar"
 }
 
-struct PixelSettings: Equatable, Sendable {
+struct PixelSettings: Equatable, Sendable, Codable {
     var width = 48
     var height = 48
     var colorCount = 16
@@ -37,11 +37,32 @@ struct SourceImage: @unchecked Sendable {
     let name: String
 }
 
-struct PixelResult: Sendable {
+// Row-major color matrix. Empty cells have alpha 0; painted cells are opaque.
+struct PixelResult: Sendable, Equatable {
     let width: Int
     let height: Int
-    let pixels: [RGBA]
-    let palette: [PaletteColor]
+    private(set) var grid: [[RGBA]]
+    var pixels: [RGBA] { grid.flatMap { $0 } }
+    var palette: [PaletteColor] {
+        var counts: [RGBA: Int] = [:]
+        for row in grid {
+            for color in row where color.a > 0 { counts[color, default: 0] += 1 }
+        }
+        return counts.map { PaletteColor(color: $0.key, count: $0.value) }.sorted {
+            $0.count == $1.count ? $0.color.hex < $1.color.hex : $0.count > $1.count
+        }
+    }
+
+    init(width: Int, height: Int, pixels: [RGBA], palette: [PaletteColor] = []) {
+        precondition((1...512).contains(width) && (1...512).contains(height) && pixels.count == width * height)
+        self.width = width; self.height = height
+        grid = (0..<height).map { row in Array(pixels[(row * width)..<((row + 1) * width)]) }
+    }
+
+    subscript(row: Int, column: Int) -> RGBA {
+        get { grid[row][column] }
+        set { grid[row][column] = newValue.a == 0 ? RGBA(r: 0, g: 0, b: 0, a: 0) : RGBA(r: newValue.r, g: newValue.g, b: newValue.b) }
+    }
 
     func cgImage(scale: Int = 1) throws -> CGImage {
         guard (1...32).contains(scale), width * scale <= 8192, height * scale <= 8192 else {
@@ -51,7 +72,7 @@ struct PixelResult: Sendable {
         var data = [UInt8](repeating: 0, count: w * h * 4)
         for y in 0..<h {
             for x in 0..<w {
-                let p = pixels[(y / scale) * width + x / scale]
+                let p = grid[y / scale][x / scale]
                 let i = (y * w + x) * 4
                 data[i] = p.r; data[i + 1] = p.g; data[i + 2] = p.b; data[i + 3] = p.a
             }
@@ -71,7 +92,7 @@ enum PixelError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidImage: "No se pudo abrir la imagen. Prueba con PNG, JPEG, HEIC, TIFF, GIF o WebP."
-        case .invalidSize: "El ancho y el alto deben estar entre 1 y 512 píxeles."
+        case .invalidSize: "El ancho y el alto deben estar entre 1 y 512 cuadrados."
         case .invalidExport: "La exportación admite hasta 8192 píxeles por lado. Reduce la escala."
         case .renderFailed: "No se pudo procesar la imagen. Intenta con otra imagen o un lienzo más pequeño."
         case .exportFailed: "No se pudo guardar el archivo. Comprueba la ubicación de destino."
@@ -125,7 +146,10 @@ enum PixelEngine {
             try Task.checkCancellation()
             for col in 0..<w {
                 if !settings.flatColors {
-                    pixels.append(read((row * w + col) * 4))
+                    var color = read((row * w + col) * 4)
+                    color.a = color.a >= 128 ? 255 : 0
+                    if color.a == 0 { color = RGBA(r: 0, g: 0, b: 0, a: 0) }
+                    pixels.append(color)
                     continue
                 }
                 // Choose the dominant color in each cell, rather than averaging edges into muddy colors.
@@ -192,6 +216,15 @@ enum PixelEngine {
             return left.count > right.count
         }
         return PixelResult(width: w, height: h, pixels: pixels, palette: palette)
+    }
+
+    static func reduce(_ result: PixelResult, limit: Int) -> PixelResult {
+        let colors = quantize(result.pixels, limit: max(2, min(64, limit)))
+        let mapped = result.pixels.map { p -> RGBA in
+            guard p.a > 0 else { return p }
+            return colors.min { distance($0, [Double(p.r), Double(p.g), Double(p.b)]) < distance($1, [Double(p.r), Double(p.g), Double(p.b)]) } ?? p
+        }
+        return PixelResult(width: result.width, height: result.height, pixels: mapped)
     }
 
     private static func distance(_ color: RGBA, _ value: [Double]) -> Double {

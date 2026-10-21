@@ -25,8 +25,8 @@ struct ContentView: View {
             footer
         }
         .background(Theme.background)
-        .onChange(of: model.settings) { model.render() }
-        .onChange(of: model.patternOptions) { model.render() }
+        .onChange(of: model.settings) { old, _ in model.settingsChanged(from: old) }
+        .onChange(of: model.patternOptions) { model.adjustScale() }
         .onChange(of: model.patternMode) { model.adjustScale() }
         .onDrop(of: [.fileURL], isTargeted: $isTargeted, perform: model.drop)
         .overlay {
@@ -71,7 +71,11 @@ struct ContentView: View {
                             dimension("Alto", value: $model.settings.height)
                         }
                         if !model.settings.isValid {
-                            Text("Usa valores de 1 a 512 px por lado.").font(.caption).foregroundStyle(Theme.accent)
+                            Text("Usa valores de 1 a 512 cuadrados por lado.").font(.caption).foregroundStyle(Theme.accent)
+                        }
+                        if model.settings.isValid {
+                            Text("\(model.settings.width * model.settings.height) cuadrados · columnas × filas")
+                                .font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.secondary)
                         }
                         HStack(spacing: 6) {
                             ForEach([16, 32, 48, 64], id: \.self) { size in
@@ -106,6 +110,13 @@ struct ContentView: View {
                             .font(.system(size: 10)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
                         Toggle("Cuadrícula", isOn: $model.patternOptions.grid).font(.system(size: 12))
                         Toggle("Coordenadas", isOn: $model.patternOptions.coordinates).font(.system(size: 12))
+                        ColorPicker("Fondo", selection: Binding(get: {
+                            let c = model.patternOptions.background
+                            return Color(red: Double(c.r) / 255, green: Double(c.g) / 255, blue: Double(c.b) / 255)
+                        }, set: { value in
+                            let c = NSColor(value).usingColorSpace(.sRGB) ?? .white
+                            model.patternOptions.background = RGBA(r: UInt8(clamping: Int((c.redComponent * 255).rounded())), g: UInt8(clamping: Int((c.greenComponent * 255).rounded())), b: UInt8(clamping: Int((c.blueComponent * 255).rounded())))
+                        }), supportsOpacity: false).font(.system(size: 12))
                         Text("La cuadrícula y los números se incluyen al exportar el patrón.")
                             .font(.system(size: 10)).foregroundStyle(Theme.secondary)
                     }
@@ -129,7 +140,9 @@ struct ContentView: View {
                     Label("Exportar \(model.exportFormat.rawValue)", systemImage: "square.and.arrow.down")
                         .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 5)
                 }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!model.canExport)
-                Text(model.patternMode ? "Patrón sobre blanco con cuadros y coordenadas. PDF conserva las líneas vectoriales." : (model.exportFormat == .jpg ? "JPG usa fondo blanco y compresión con pérdida." : "Imagen sin papel; conserva la transparencia."))
+                Button("Guardar editable…", action: model.saveDocument)
+                    .disabled(!model.canExport).frame(maxWidth: .infinity)
+                Text(model.patternMode ? "Patrón con fondo, cuadros y coordenadas. PDF conserva las líneas vectoriales." : (model.exportFormat == .jpg ? "JPG usa fondo blanco y compresión con pérdida." : "Imagen sin cuadrícula; conserva las casillas vacías."))
                     .font(.system(size: 10)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
             }
             .padding(22)
@@ -142,32 +155,52 @@ struct ContentView: View {
                 Circle().fill(model.source == nil ? Theme.secondary : Theme.accent).frame(width: 6, height: 6)
                 Text(model.source?.name ?? "VISTA PREVIA").font(.system(size: 11, weight: .medium, design: .monospaced)).lineLimit(1)
                 Spacer()
-                if model.source != nil {
+                if model.result != nil {
                     Picker("Vista y exportación", selection: $model.patternMode) {
                         Text("Patrón").tag(true)
                         Text("Imagen").tag(false)
                     }.pickerStyle(.segmented).frame(width: 150).labelsHidden()
-                    Toggle("Original", isOn: $model.showOriginal).toggleStyle(.button)
+                    if model.original != nil { Toggle("Original", isOn: $model.showOriginal).toggleStyle(.button) }
                 }
             }.foregroundStyle(Theme.secondary).padding(.horizontal, 25).padding(.vertical, 17)
+            if model.result != nil {
+                HStack(spacing: 10) {
+                    Picker("Herramienta", selection: $model.tool) {
+                        ForEach(CellTool.allCases) { Text($0.rawValue).tag($0) }
+                    }.labelsHidden().frame(width: 125)
+                    ColorPicker("Color", selection: $model.selectedColor, supportsOpacity: false).labelsHidden()
+                    Button(action: model.undo) { Image(systemName: "arrow.uturn.backward") }
+                        .disabled(!model.history.canUndo).keyboardShortcut("z", modifiers: .command)
+                    Button(action: model.redo) { Image(systemName: "arrow.uturn.forward") }
+                        .disabled(!model.history.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                    Spacer()
+                    Text("Zoom").font(.caption)
+                    Slider(value: $model.zoom, in: 1...16, step: 0.5).frame(width: 90)
+                    Button("Ver completo") { model.zoom = 1 }
+                }.disabled(model.busy || model.showOriginal).padding(.horizontal, 24).padding(.bottom, 10)
+            }
             GeometryReader { geometry in
                 ZStack {
                     DotBackground()
-                    if let image = model.displayedPreview {
-                        let ratio = image.size.width / image.size.height
-                        let size = fittedSize(ratio: ratio, bounds: geometry.size)
-                        ZStack {
-                            Checkerboard()
-                            Image(nsImage: image).interpolation(model.showOriginal ? .high : .none).resizable().aspectRatio(contentMode: .fit)
+                    if model.showOriginal, let image = model.original {
+                        Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).padding(24)
+                    } else if let result = model.result {
+                        let margin = model.patternMode ? model.patternOptions.margin * 2 : 0
+                        let available = min((geometry.size.width - CGFloat(margin) - 32) / CGFloat(result.width),
+                                            (geometry.size.height - CGFloat(margin) - 32) / CGFloat(result.height))
+                        let cell = max(1, Int(floor(max(1, available) * model.zoom)))
+                        let displayScale: CGFloat = model.zoom == 1 ? min(1, max(0.01, available)) : 1
+                        ScrollView([.horizontal, .vertical]) {
+                            GridCanvas(model: model, result: result, cellSize: cell, displayScale: displayScale, options: model.patternOptions, patternMode: model.patternMode)
+                                .frame(width: CGFloat(result.width * cell + margin) * displayScale, height: CGFloat(result.height * cell + margin) * displayScale)
+                                .padding(16)
+                                .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
                         }
-                        .frame(width: size.width, height: size.height)
-                        .overlay(Rectangle().stroke(.white.opacity(0.16), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.25), radius: 25, y: 10)
                     } else if !model.busy {
                         emptyState
                     }
                     if model.busy {
-                        HStack(spacing: 9) { ProgressView().controlSize(.small); Text("Creando píxeles…").font(.caption) }
+                        HStack(spacing: 9) { ProgressView().controlSize(.small); Text("Creando cuadrados…").font(.caption) }
                             .padding(14).background(.ultraThinMaterial, in: Capsule())
                     }
                 }
@@ -228,7 +261,7 @@ struct ContentView: View {
     private func paletteEntry(_ entry: PaletteColor) -> some View {
         let visible = !model.patternOptions.hiddenSymbolColors.contains(entry.color)
         return VStack(alignment: .leading, spacing: 6) {
-            Button { model.copy(entry.color.hex); model.message = "\(entry.color.hex) copiado" } label: {
+            Button { model.select(entry.color); model.copy(entry.color.hex); model.message = "\(entry.color.hex) seleccionado y copiado" } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     RoundedRectangle(cornerRadius: 5)
                         .fill(Color(red: Double(entry.color.r) / 255, green: Double(entry.color.g) / 255, blue: Double(entry.color.b) / 255))
@@ -242,7 +275,10 @@ struct ContentView: View {
                         }
                     Text(entry.color.hex).font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.secondary)
                 }
-            }.buttonStyle(.plain).help("Copiar \(entry.color.hex) · \(entry.count) cuadros")
+            }.buttonStyle(.plain).help("Seleccionar y copiar \(entry.color.hex)")
+            Text("\(entry.count) cuadros").font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.secondary)
+            Button("Reemplazar") { model.replaceColor(entry.color) }
+                .buttonStyle(.plain).font(.system(size: 9)).help("Cambiar todas las celdas de este color por el color de dibujo")
             if model.patternOptions.symbolsEnabled {
                 Toggle("Activar", isOn: Binding(get: { visible }, set: { model.setSymbolVisible($0, for: entry.color) }))
                     .font(.system(size: 10)).accessibilityLabel("Activar símbolo para \(entry.color.hex)")
@@ -282,7 +318,7 @@ struct ContentView: View {
             TextField(title, value: value, format: .number.grouping(.never))
                 .font(.system(size: 16, weight: .medium, design: .monospaced))
                 .textFieldStyle(.plain).padding(10).background(Theme.field, in: RoundedRectangle(cornerRadius: 6))
-                .accessibilityLabel("\(title) en píxeles")
+                .accessibilityLabel("\(title) en cuadrados")
         }
     }
 

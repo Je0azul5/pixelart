@@ -9,8 +9,8 @@
     <key>CFBundleName</key><string>JeXelart</string>
     <key>CFBundleDisplayName</key><string>JeXelart</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.2.0</string>
-    <key>CFBundleVersion</key><string>3</string>
+    <key>CFBundleShortVersionString</key><string>1.3.0</string>
+    <key>CFBundleVersion</key><string>4</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSHumanReadableCopyright</key><string>JeXelart · Je0azul5</string>
@@ -20,6 +20,20 @@
         <key>CFBundleTypeRole</key><string>Viewer</string>
         <key>LSHandlerRank</key><string>Alternate</string>
         <key>LSItemContentTypes</key><array><string>public.image</string></array>
+    </dict><dict>
+        <key>CFBundleTypeName</key><string>Patrón JeXelart</string>
+        <key>CFBundleTypeRole</key><string>Editor</string>
+        <key>LSHandlerRank</key><string>Owner</string>
+        <key>LSItemContentTypes</key><array><string>com.jevstudio.jexelart.pattern</string></array>
+    </dict></array>
+    <key>UTExportedTypeDeclarations</key>
+    <array><dict>
+        <key>UTTypeIdentifier</key><string>com.jevstudio.jexelart.pattern</string>
+        <key>UTTypeDescription</key><string>Patrón editable JeXelart</string>
+        <key>UTTypeConformsTo</key><array><string>public.json</string></array>
+        <key>UTTypeTagSpecification</key><dict>
+            <key>public.filename-extension</key><array><string>jexelart</string></array>
+        </dict>
     </dict></array>
 </dict>
 </plist>

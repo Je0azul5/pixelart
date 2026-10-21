@@ -4,7 +4,7 @@ import PDFKit
 
 @main
 struct PixelEngineChecks {
-    static func main() throws {
+    @MainActor static func main() async throws {
         try testRectangularCanvasAndPalette()
         try testExactDimensionsAndNearestNeighborExport()
         try testQuantizationAndDitheringRespectColorLimit()
@@ -16,10 +16,16 @@ struct PixelEngineChecks {
         try testPatternRenderingAndExports()
         try testSymbolsAndPerColorVisibility()
         testUniqueSymbolAssignments()
+        try testRequestedDimensionsAndSolidCells()
+        testCellEditingAndHistory()
+        testCellHitTesting()
+        try testEditableDocument()
+        try testSharpRasterColors()
+        try await testAppEditingAndImport()
         if CommandLine.arguments.count == 3 {
             try exportExample(input: CommandLine.arguments[1], directory: CommandLine.arguments[2])
         }
-        print("✓ 11 comprobaciones: conversión, paleta, símbolos por color, contraste, transparencia y exportación PNG/JPG/PDF")
+        print("✓ 17 comprobaciones: dimensiones exactas, celdas sólidas, edición, historial, coordenadas, archivo editable y exportaciones")
     }
     private static func fixture() throws -> CGImage {
         // Distinct quadrants expose flips, interpolation and unintended palette changes.
@@ -67,7 +73,7 @@ struct PixelEngineChecks {
         for alpha: UInt8 in [0, 128, 255] {
             let image = try PixelResult(width: 1, height: 1, pixels: [RGBA(r: 200, g: 100, b: 40, a: alpha)], palette: []).cgImage()
             let output = try PixelEngine.render(source: image, settings: PixelSettings(width: 1, height: 1, flatColors: false))
-            expectEqual(output.pixels[0].a, alpha)
+            expectEqual(output.pixels[0].a, alpha >= 128 ? 255 : 0)
             expectEqual(output.palette.count, alpha == 0 ? 0 : 1)
         }
     }
@@ -235,6 +241,161 @@ struct PixelEngineChecks {
                 expectEqual(loaded.image.height, marked.height)
             }
         }
+    }
+
+    static func testRequestedDimensionsAndSolidCells() throws {
+        for (width, height, count) in [(25, 25, 625), (30, 50, 1500), (40, 40, 1600), (43, 62, 2666), (1, 512, 512)] {
+            for fit in ImageFit.allCases {
+                let result = try PixelEngine.render(source: fixture(), settings: PixelSettings(width: width, height: height, fit: fit))
+                expectEqual(result.width, width); expectEqual(result.height, height)
+                expectEqual(result.grid.count, height)
+                expectTrue(result.grid.allSatisfy { $0.count == width })
+                expectEqual(result.pixels.count, count)
+                expectTrue(result.pixels.allSatisfy { $0.a == 0 || $0.a == 255 })
+                let image = try result.cgImage(scale: 3)
+                expectEqual(image.width, width * 3); expectEqual(image.height, height * 3)
+            }
+        }
+    }
+
+    static func testCellEditingAndHistory() {
+        let red = RGBA(r: 255, g: 0, b: 0), blue = RGBA(r: 0, g: 0, b: 255)
+        let empty = RGBA(r: 0, g: 0, b: 0, a: 0)
+        var result = PixelResult(width: 3, height: 2, pixels: [red, blue, red, red, blue, red])
+        var history = GridHistory()
+        history.set(blue, row: 0, column: 0, in: &result)
+        history.set(empty, row: 0, column: 0, in: &result)
+        history.commit()
+        expectEqual(result.pixels, [empty, blue, red, red, blue, red])
+        expectEqual(result.palette.first?.count, 3)
+        history.undo(in: &result); expectEqual(result[0, 0], red)
+        history.redo(in: &result); expectEqual(result[0, 0], empty)
+        history.fill(blue, row: 1, column: 2, in: &result); history.commit()
+        expectEqual(result.pixels, [empty, blue, blue, red, blue, blue])
+        history.undo(in: &result); expectEqual(result.pixels, [empty, blue, red, red, blue, red])
+        history.set(red, row: 0, column: 0, in: &result); history.commit()
+        expectTrue(!history.canRedo)
+        history.set(blue, row: -1, column: 0, in: &result)
+        history.fill(red, row: 1, column: 3, in: &result)
+        expectEqual(result.pixels, [red, blue, red, red, blue, red])
+        // Diagonals must not be included by a contiguous fill.
+        var diagonal = PixelResult(width: 2, height: 2, pixels: [red, blue, blue, red])
+        history = GridHistory()
+        history.fill(empty, row: 0, column: 0, in: &diagonal); history.commit()
+        expectEqual(diagonal.pixels, [empty, blue, blue, red])
+        let reduced = PixelEngine.reduce(result, limit: 2)
+        expectAtMost(reduced.palette.count, 2)
+        expectEqual(reduced.width, result.width); expectEqual(reduced.height, result.height)
+    }
+
+    static func testCellHitTesting() {
+        for cell: CGFloat in [1, 8, 32, 128] {
+            expectEqual(GridGeometry.cell(at: CGPoint(x: 32, y: 32), width: 25, height: 25, cellSize: cell, margin: 32), CellAddress(row: 0, column: 0))
+            expectEqual(GridGeometry.cell(at: CGPoint(x: 32 + cell * 24.5, y: 32 + cell * 24.5), width: 25, height: 25, cellSize: cell, margin: 32), CellAddress(row: 24, column: 24))
+            expectEqual(GridGeometry.cell(at: CGPoint(x: 31, y: 32), width: 25, height: 25, cellSize: cell, margin: 32), nil)
+            expectEqual(GridGeometry.cell(at: CGPoint(x: 32 + cell * 25, y: 32), width: 25, height: 25, cellSize: cell, margin: 32), nil)
+        }
+    }
+
+    static func testEditableDocument() throws {
+        let result = try PixelEngine.render(source: fixture(), settings: PixelSettings(width: 43, height: 62))
+        var options = PatternOptions(symbolsEnabled: true)
+        options.background = RGBA(r: 220, g: 230, b: 240)
+        options.symbolAssignments[result.palette[0].color] = "♥"
+        options.hiddenSymbolColors.insert(result.palette[0].color)
+        let document = GridDocument(settings: PixelSettings(width: 43, height: 62), grid: result.grid, options: options)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jexelart")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try document.write(to: url)
+        let loaded = try GridDocument.read(from: url)
+        expectEqual(try loaded.validatedResult(), result)
+        expectEqual(loaded.options, options)
+        expectEqual(loaded.settings, document.settings)
+        var invalid = document
+        invalid.grid.removeLast(); expectThrows(try invalid.validatedResult())
+        invalid = document; invalid.grid[0].removeLast(); expectThrows(try invalid.validatedResult())
+        invalid = document; invalid.settings.width = Int.max; expectThrows(try invalid.validatedResult())
+        invalid = document; invalid.grid[0][0].a = 128; expectThrows(try invalid.validatedResult())
+        invalid = document; invalid.version = 2; expectThrows(try invalid.validatedResult())
+    }
+
+    static func testSharpRasterColors() throws {
+        let result = try PixelEngine.render(source: fixture(), settings: PixelSettings(width: 2, height: 2))
+        var plain = PatternOptions(grid: false, coordinates: false)
+        plain.background = RGBA(r: 250, g: 240, b: 230)
+        let allowed: Set<[UInt8]> = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [250, 240, 230, 255]]
+        for grid in [false, true] {
+            plain.grid = grid
+            let image = try PatternRenderer.image(result, cellSize: 16, options: plain)
+            let data = image.dataProvider!.data! as Data
+            var actual: Set<[UInt8]> = []
+            for y in 0..<image.height {
+                for x in 0..<image.width {
+                    let i = y * image.bytesPerRow + x * 4
+                    actual.insert(Array(data[i..<(i + 4)]))
+                }
+            }
+            let expected = grid ? allowed.union([[64, 64, 64, 255]]) : allowed
+            expectEqual(actual, expected)
+        }
+        let image = try result.cgImage(scale: 7)
+        let data = image.dataProvider!.data! as Data
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                let p = result[y / 7, x / 7]
+                let i = y * image.bytesPerRow + x * 4
+                expectEqual(Array(data[i..<(i + 4)]), [p.r, p.g, p.b, p.a])
+            }
+        }
+    }
+
+    @MainActor static func testAppEditingAndImport() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let vertical = PixelResult(width: 1, height: 4, pixels: Array(repeating: RGBA(r: 255, g: 0, b: 0), count: 4))
+        let imageURL = folder.appendingPathComponent("vertical.png")
+        try ImageExporter.write(vertical, format: .png, scale: 1, to: imageURL)
+        let model = AppModel()
+        model.settings.width = 25; model.settings.height = 25
+        model.load(imageURL)
+        for _ in 0..<250 {
+            if !model.busy { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        expectTrue(!model.busy); expectEqual(model.error, nil)
+        expectEqual(model.settings.width, 25); expectEqual(model.settings.height, 25)
+        expectEqual(model.result?.pixels.count, 625)
+        let before = try unwrap(model.result)
+        let blue = RGBA(r: 0, g: 0, b: 255)
+        model.select(blue)
+        model.edit(row: 0, column: 0, initial: true); model.endStroke()
+        expectEqual(model.result?[0, 0], blue)
+        expectEqual(model.result?[0, 1], before[0, 1])
+        model.tool = .eyedropper
+        model.select(RGBA(r: 0, g: 255, b: 0))
+        model.edit(row: 0, column: 0, initial: true)
+        expectEqual(model.paintColor, blue)
+        model.undo(); expectEqual(model.result, before)
+        model.redo(); expectEqual(model.result?[0, 0], blue)
+        model.tool = .eraser; model.edit(row: 0, column: 0, initial: true); model.endStroke()
+        expectEqual(model.result?[0, 0].a, 0)
+        model.undo(); expectEqual(model.result?[0, 0], blue)
+        model.select(RGBA(r: 0, g: 255, b: 0)); model.replaceColor(blue)
+        expectEqual(model.result?[0, 0].hex, "#00FF00")
+        model.undo(); expectEqual(model.result?[0, 0], blue)
+        // Opening an editable file with identical settings must keep the edited matrix.
+        let edited = try unwrap(model.result)
+        let documentURL = folder.appendingPathComponent("edited.jexelart")
+        try GridDocument(settings: model.settings, grid: edited.grid, options: model.patternOptions).write(to: documentURL)
+        model.load(documentURL)
+        expectEqual(model.result, edited); expectTrue(model.source == nil)
+        model.patternOptions.grid.toggle(); model.patternOptions.coordinates.toggle()
+        expectEqual(model.result, edited)
+        let old = model.settings
+        model.settings.colorCount = 2; model.settingsChanged(from: old)
+        expectEqual(model.result?.width, 25); expectEqual(model.result?.height, 25)
+        expectAtMost(model.result!.palette.count, 2)
     }
 
     static func exportExample(input: String, directory: String) throws {
