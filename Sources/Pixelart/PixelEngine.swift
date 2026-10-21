@@ -136,6 +136,13 @@ enum PixelEngine {
                     for dx in 0..<samples {
                         var p = read(((row * samples + dy) * sampleWidth + col * samples + dx) * 4)
                         p.a = p.a >= 128 ? 255 : 0
+                        // Merge almost identical edge shades so they do not consume the flat-color palette.
+                        func flatChannel(_ value: UInt8) -> UInt8 {
+                            if value <= 12 { return 0 }
+                            if value >= 243 { return 255 }
+                            return UInt8((Int(value) + 4) / 8 * 8)
+                        }
+                        p.r = flatChannel(p.r); p.g = flatChannel(p.g); p.b = flatChannel(p.b)
                         let key: UInt32 = p.a == 0 ? 0x1000000 : UInt32(p.r >> 3) << 10 | UInt32(p.g >> 3) << 5 | UInt32(p.b >> 3)
                         if counts[key] == nil { order.append(key); representatives[key] = p }
                         counts[key, default: 0] += 1

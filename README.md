@@ -6,7 +6,7 @@ App nativa para macOS para convertir ilustraciones y fotos en patrones de **cuad
 
 1. Abre una imagen con `⌘O` o arrástrala a la ventana.
 2. Elige las columnas y filas del lienzo, por ejemplo **10 × 10**, **23 × 49** o **48 × 48**. Cada casilla representa exactamente un píxel de la imagen convertida.
-3. Ajusta el máximo de colores. **Colores planos**, activado inicialmente, toma el color dominante de cada casilla y elimina la transparencia parcial para formar bloques definidos. Puedes desactivarlo para conservar matices y transparencia parcial.
+3. Ajusta el máximo de colores. **Colores planos**, activado inicialmente, toma el color dominante de cada casilla, agrupa tonos casi idénticos y elimina la transparencia parcial para formar bloques definidos. Puedes desactivarlo para conservar matices y transparencia parcial.
 4. La vista **Patrón** muestra cuadros sobre blanco, cuadrícula y coordenadas de filas y columnas, como una guía para reproducir la ilustración. Los cuadros siempre son cuadrados, aunque el lienzo sea rectangular.
 5. Exporta en **PNG, JPG o PDF**. El patrón incluye los márgenes, las líneas y los números visibles. PDF dibuja las casillas y la cuadrícula como vectores.
 

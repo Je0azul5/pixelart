@@ -124,6 +124,11 @@ struct PixelEngineChecks {
         let alphaImage = try PixelResult(width: 1, height: 1, pixels: [RGBA(r: 255, g: 0, b: 0, a: 200)], palette: []).cgImage()
         let solid = try PixelEngine.render(source: alphaImage, settings: PixelSettings(width: 1, height: 1))
         expectEqual(solid.pixels[0].a, 255)
+        let nearBlack = try PixelResult(width: 2, height: 1,
+                                       pixels: [RGBA(r: 0, g: 0, b: 0), RGBA(r: 3, g: 6, b: 8)], palette: []).cgImage()
+        let clean = try PixelEngine.render(source: nearBlack, settings: PixelSettings(width: 2, height: 1))
+        expectEqual(clean.palette.count, 1)
+        expectEqual(clean.palette[0].color.hex, "#000000")
     }
 
     static func testPatternRenderingAndExports() throws {
