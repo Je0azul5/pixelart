@@ -36,6 +36,26 @@ final class AppModel {
 
     func adjustScale() { exportScale = min(max(exportScale, minScale), maxScale) }
 
+    func symbol(for color: RGBA) -> String {
+        patternOptions.resolvedSymbols(for: result?.palette ?? [])[color] ?? PatternOptions.symbols[0]
+    }
+
+    func setSymbol(_ symbol: String, for color: RGBA) {
+        guard PatternOptions.symbols.contains(symbol), let result else { return }
+        var assignments = patternOptions.resolvedSymbols(for: result.palette)
+        let old = assignments[color]
+        if let other = assignments.first(where: { $0.key != color && $0.value == symbol })?.key {
+            assignments[other] = old
+        }
+        assignments[color] = symbol
+        patternOptions.symbolAssignments = assignments
+    }
+
+    func setSymbolVisible(_ visible: Bool, for color: RGBA) {
+        if visible { patternOptions.hiddenSymbolColors.remove(color) }
+        else { patternOptions.hiddenSymbolColors.insert(color) }
+    }
+
     func openImage() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.image]
@@ -117,7 +137,13 @@ final class AppModel {
 
     func copyPalette() {
         guard let result else { return }
-        copy(result.palette.map(\.color.hex).joined(separator: "\n"))
+        let symbols = patternOptions.resolvedSymbols(for: result.palette)
+        copy(result.palette.map { entry in
+            if patternOptions.symbolsEnabled, !patternOptions.hiddenSymbolColors.contains(entry.color), let symbol = symbols[entry.color] {
+                return "\(entry.color.hex)  \(symbol)"
+            }
+            return entry.color.hex
+        }.joined(separator: "\n"))
         message = "Paleta copiada al portapapeles"
     }
 

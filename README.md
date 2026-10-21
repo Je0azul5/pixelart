@@ -14,6 +14,14 @@ Puedes ocultar la cuadrícula y las coordenadas por separado. La vista **Imagen*
 
 La paleta muestra los colores RGB del resultado, ordenados por frecuencia. Haz clic en un color para copiar su HEX o usa **Copiar HEX** para copiar toda la paleta.
 
+## Símbolos por color
+
+Activa **Símbolos por color** en la cabecera de la paleta para colocar un símbolo en cada cuadro del patrón, como en una guía de bordado. Cada color recibe un símbolo diferente entre 64 opciones: cruces, círculos, cuadrados, estrellas, corazones, letras y números.
+
+Debajo de cada color puedes **activar o desactivar** su símbolo y elegir otro en el desplegable. Si eliges uno que ya utiliza otro color, los dos se intercambian para mantener la correspondencia. Los símbolos se dibujan blancos o negros según el contraste del fondo; las casillas transparentes se dejan vacías.
+
+La vista previa y las exportaciones PNG, JPG y PDF del modo **Patrón** incluyen los símbolos. El modo **Imagen** conserva solo los píxeles. Con la función activada, **Copiar HEX** también incluye la correspondencia de símbolos de los colores activos.
+
 ## Opciones
 
 - Lienzos de **1 a 512 cuadros por lado**, con ancho y alto independientes.

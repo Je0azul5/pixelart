@@ -14,10 +14,12 @@ struct PixelEngineChecks {
         try testAllExportFormatsRoundTrip()
         try testDominantCellsKeepFlatColors()
         try testPatternRenderingAndExports()
+        try testSymbolsAndPerColorVisibility()
+        testUniqueSymbolAssignments()
         if CommandLine.arguments.count == 3 {
             try exportExample(input: CommandLine.arguments[1], directory: CommandLine.arguments[2])
         }
-        print("✓ 9 comprobaciones: dimensiones, orientación, paleta, tramado, transparencia, límites y exportación PNG/JPG/PDF")
+        print("✓ 11 comprobaciones: conversión, paleta, símbolos por color, contraste, transparencia y exportación PNG/JPG/PDF")
     }
     private static func fixture() throws -> CGImage {
         // Distinct quadrants expose flips, interpolation and unintended palette changes.
@@ -170,6 +172,71 @@ struct PixelEngineChecks {
         expectThrows(try PatternRenderer.image(large, cellSize: 16, options: options))
     }
 
+    static func testUniqueSymbolAssignments() {
+        expectEqual(PatternOptions.symbols.count, 64)
+        expectEqual(Set(PatternOptions.symbols).count, 64)
+        let palette = (0..<64).map { PaletteColor(color: RGBA(r: UInt8($0 * 4), g: 0, b: 0), count: 1) }
+        var options = PatternOptions()
+        options.symbolAssignments[palette[30].color] = "♥"
+        let assigned = options.resolvedSymbols(for: palette)
+        expectEqual(assigned.count, 64)
+        expectEqual(Set(assigned.values).count, 64)
+        expectEqual(assigned[palette[30].color], "♥")
+        let reordered = options.resolvedSymbols(for: Array(palette.reversed()))
+        expectEqual(reordered[palette[30].color], "♥")
+        expectTrue(PatternOptions.usesLightInk(for: RGBA(r: 0, g: 0, b: 0)))
+        expectTrue(!PatternOptions.usesLightInk(for: RGBA(r: 255, g: 255, b: 0)))
+        expectTrue(!PatternOptions.usesLightInk(for: RGBA(r: 0, g: 0, b: 0, a: 0)))
+    }
+
+    static func testSymbolsAndPerColorVisibility() throws {
+        let black = RGBA(r: 0, g: 0, b: 0), yellow = RGBA(r: 255, g: 255, b: 0), white = RGBA(r: 255, g: 255, b: 255)
+        let result = PixelResult(width: 2, height: 2,
+                                 pixels: [black, yellow, white, RGBA(r: 0, g: 0, b: 0, a: 0)],
+                                 palette: [black, yellow, white].map { PaletteColor(color: $0, count: 1) })
+        let plain = PatternOptions(grid: false, coordinates: false)
+        var options = plain
+        options.symbolsEnabled = true
+        options.symbolAssignments = [black: "□", yellow: "×", white: "○"]
+        let base = try PatternRenderer.image(result, cellSize: 32, options: plain)
+        let marked = try PatternRenderer.image(result, cellSize: 32, options: options)
+        func cellBytes(_ image: CGImage, col: Int, row: Int) -> [UInt8] {
+            let data = image.dataProvider!.data! as Data
+            return (0..<32).flatMap { y -> [UInt8] in
+                let start = (12 + row * 32 + y) * image.bytesPerRow + (12 + col * 32) * 4
+                return Array(data[start..<(start + 32 * 4)])
+            }
+        }
+        for (col, row) in [(0, 0), (1, 0), (0, 1)] {
+            expectTrue(cellBytes(base, col: col, row: row) != cellBytes(marked, col: col, row: row))
+        }
+        expectEqual(cellBytes(base, col: 1, row: 1), cellBytes(marked, col: 1, row: 1))
+        options.hiddenSymbolColors.insert(yellow)
+        let hidden = try PatternRenderer.image(result, cellSize: 32, options: options)
+        expectEqual(cellBytes(base, col: 1, row: 0), cellBytes(hidden, col: 1, row: 0))
+        expectTrue(cellBytes(base, col: 0, row: 0) != cellBytes(hidden, col: 0, row: 0))
+        options.symbolsEnabled = false
+        let disabled = try PatternRenderer.image(result, cellSize: 32, options: options)
+        expectEqual(disabled.dataProvider!.data! as Data, base.dataProvider!.data! as Data)
+        options.symbolsEnabled = true
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for format in ExportFormat.allCases {
+            let url = directory.appendingPathComponent("symbols.\(format.ext)")
+            try ImageExporter.write(result, format: format, scale: 32, to: url, pattern: options)
+            if format == .pdf {
+                let pdf = try unwrap(PDFDocument(url: url))
+                expectTrue(pdf.string?.contains("□") == true)
+                expectTrue(pdf.string?.contains("×") == false)
+            } else {
+                let loaded = try PixelEngine.load(url: url)
+                expectEqual(loaded.image.width, marked.width)
+                expectEqual(loaded.image.height, marked.height)
+            }
+        }
+    }
+
     static func exportExample(input: String, directory: String) throws {
         let source = try PixelEngine.load(url: URL(fileURLWithPath: input))
         let result = try PixelEngine.render(source: source.image, settings: PixelSettings())
@@ -178,6 +245,9 @@ struct PixelEngineChecks {
         for format in ExportFormat.allCases {
             try ImageExporter.write(result, format: format, scale: 20,
                                     to: folder.appendingPathComponent("PaTico-JeXelart-48x48.\(format.ext)"), pattern: PatternOptions())
+            try ImageExporter.write(result, format: format, scale: 24,
+                                    to: folder.appendingPathComponent("PaTico-JeXelart-simbolos-48x48.\(format.ext)"),
+                                    pattern: PatternOptions(symbolsEnabled: true))
         }
         print("✓ Ejemplo generado en \(folder.path)")
     }

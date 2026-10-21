@@ -5,8 +5,41 @@ import Foundation
 struct PatternOptions: Equatable, Sendable {
     var grid = true
     var coordinates = true
+    var symbolsEnabled = false
+    var symbolAssignments: [RGBA: String] = [:]
+    var hiddenSymbolColors: Set<RGBA> = []
 
     var margin: Int { coordinates ? 32 : 12 }
+
+    static let symbols = ["×", "+", "○", "□", "★", "♥", "◇", "△", "●", "■", "◆", "▲"]
+        + Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789").map(String.init)
+        + ["☆", "♡", "▽", "◁", "▷", "⊕", "⊗", "⊙", "⊞", "⊠", "≡", "=", "%", "#", "&", "?"]
+
+    func resolvedSymbols(for palette: [PaletteColor]) -> [RGBA: String] {
+        var assignments: [RGBA: String] = [:]
+        var used: Set<String> = []
+        for entry in palette {
+            if let symbol = symbolAssignments[entry.color], Self.symbols.contains(symbol), !used.contains(symbol) {
+                assignments[entry.color] = symbol
+                used.insert(symbol)
+            }
+        }
+        for entry in palette where assignments[entry.color] == nil {
+            if let symbol = Self.symbols.first(where: { !used.contains($0) }) {
+                assignments[entry.color] = symbol
+                used.insert(symbol)
+            }
+        }
+        return assignments
+    }
+
+    static func usesLightInk(for color: RGBA) -> Bool {
+        func linear(_ value: UInt8) -> Double {
+            let channel = (Double(value) / 255) * (Double(color.a) / 255) + 1 - Double(color.a) / 255
+            return channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b) < 0.179
+    }
 }
 
 enum PatternRenderer {
@@ -47,6 +80,38 @@ enum PatternRenderer {
                 context.fill(CGRect(x: margin + CGFloat(col) * cell,
                                     y: margin + CGFloat(result.height - row - 1) * cell,
                                     width: cell, height: cell))
+            }
+        }
+        if options.symbolsEnabled {
+            context.setShouldAntialias(true)
+            let symbols = options.resolvedSymbols(for: result.palette)
+            let font = CTFontCreateWithName("Menlo" as CFString, cell * 0.72, nil)
+            var lines: [String: CTLine] = [:]
+            for symbol in Set(symbols.values) {
+                // Text presentation keeps hearts and stars monochrome rather than turning into emoji.
+                let text = NSAttributedString(string: symbol + "\u{FE0E}", attributes: [
+                    NSAttributedString.Key(kCTFontAttributeName as String): font,
+                    NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true
+                ])
+                lines[symbol] = CTLineCreateWithAttributedString(text)
+            }
+            for row in 0..<result.height {
+                for col in 0..<result.width {
+                    let pixel = result.pixels[row * result.width + col]
+                    guard pixel.a > 0 else { continue }
+                    let color = RGBA(r: pixel.r, g: pixel.g, b: pixel.b)
+                    guard !options.hiddenSymbolColors.contains(color), let symbol = symbols[color], let line = lines[symbol] else { continue }
+                    let bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+                    context.saveGState()
+                    let rect = CGRect(x: margin + CGFloat(col) * cell, y: margin + CGFloat(result.height - row - 1) * cell,
+                                      width: cell, height: cell)
+                    context.clip(to: rect.insetBy(dx: cell * 0.1, dy: cell * 0.1))
+                    context.setFillColor(CGColor(gray: PatternOptions.usesLightInk(for: pixel) ? 1 : 0, alpha: 1))
+                    context.textMatrix = .identity
+                    context.textPosition = CGPoint(x: rect.midX - bounds.midX, y: rect.midY - bounds.midY)
+                    CTLineDraw(line, context)
+                    context.restoreGState()
+                }
             }
         }
         if options.grid {

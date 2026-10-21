@@ -200,6 +200,9 @@ struct ContentView: View {
             HStack {
                 Text("PALETA DE LA IMAGEN").font(.system(size: 10, weight: .semibold, design: .monospaced)).tracking(1)
                 Spacer()
+                Toggle("Símbolos por color", isOn: $model.patternOptions.symbolsEnabled)
+                    .font(.system(size: 11))
+                    .help("Añade símbolos en la vista Patrón y en sus exportaciones. Ajusta cada color debajo.")
                 Button(action: model.copyPalette) { Label("Copiar HEX", systemImage: "doc.on.doc") }
                     .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Theme.secondary)
                     .disabled(model.result == nil || model.busy)
@@ -208,13 +211,7 @@ struct ContentView: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         ForEach(result.palette) { entry in
-                            Button { model.copy(entry.color.hex); model.message = "\(entry.color.hex) copiado" } label: {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    RoundedRectangle(cornerRadius: 5).fill(Color(red: Double(entry.color.r) / 255, green: Double(entry.color.g) / 255, blue: Double(entry.color.b) / 255))
-                                        .frame(width: 66, height: 40).overlay(RoundedRectangle(cornerRadius: 5).stroke(.white.opacity(0.12)))
-                                    Text(entry.color.hex).font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.secondary)
-                                }
-                            }.buttonStyle(.plain).help("Copiar \(entry.color.hex) · \(entry.count) píxeles")
+                            paletteEntry(entry)
                         }
                     }.padding(.bottom, 4)
                 }
@@ -226,6 +223,36 @@ struct ContentView: View {
                     .font(.system(size: 11)).foregroundStyle(Theme.secondary)
             }
         }.padding(24).background(Theme.panel)
+    }
+
+    private func paletteEntry(_ entry: PaletteColor) -> some View {
+        let visible = !model.patternOptions.hiddenSymbolColors.contains(entry.color)
+        return VStack(alignment: .leading, spacing: 6) {
+            Button { model.copy(entry.color.hex); model.message = "\(entry.color.hex) copiado" } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(Color(red: Double(entry.color.r) / 255, green: Double(entry.color.g) / 255, blue: Double(entry.color.b) / 255))
+                        .frame(width: 78, height: 40)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(.white.opacity(0.12)))
+                        .overlay {
+                            if model.patternOptions.symbolsEnabled && visible {
+                                Text(model.symbol(for: entry.color)).font(.system(size: 24, design: .monospaced))
+                                    .foregroundStyle(PatternOptions.usesLightInk(for: entry.color) ? Color.white : Color.black)
+                            }
+                        }
+                    Text(entry.color.hex).font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.secondary)
+                }
+            }.buttonStyle(.plain).help("Copiar \(entry.color.hex) · \(entry.count) cuadros")
+            if model.patternOptions.symbolsEnabled {
+                Toggle("Activar", isOn: Binding(get: { visible }, set: { model.setSymbolVisible($0, for: entry.color) }))
+                    .font(.system(size: 10)).accessibilityLabel("Activar símbolo para \(entry.color.hex)")
+                Picker("Símbolo para \(entry.color.hex)", selection: Binding(
+                    get: { model.symbol(for: entry.color) }, set: { model.setSymbol($0, for: entry.color) }
+                )) {
+                    ForEach(PatternOptions.symbols, id: \.self) { Text($0).tag($0) }
+                }.labelsHidden().frame(width: 78).disabled(!visible)
+            }
+        }.frame(width: 78).disabled(model.busy)
     }
 
     private var footer: some View {
