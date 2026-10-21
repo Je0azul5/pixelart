@@ -54,7 +54,8 @@ struct ContentView: View {
     }
 
     private var controls: some View {
-        ScrollView {
+        VStack(spacing: 0) {
+            ScrollView {
             VStack(alignment: .leading, spacing: 25) {
                 VStack(alignment: .leading, spacing: 7) {
                     Text("Tu imagen, píxel a píxel.").font(.system(size: 18, weight: .semibold))
@@ -99,7 +100,9 @@ struct ContentView: View {
                     Text("El tramado mezcla puntos para crear transiciones de color.")
                         .font(.system(size: 10)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                divider
+            }.padding(22)
+            }
+            divider
                 section("03", "EXPORTAR") {
                     Picker("Formato", selection: $model.exportFormat) {
                         ForEach(ExportFormat.allCases) { Text($0.rawValue).tag($0) }
@@ -120,7 +123,7 @@ struct ContentView: View {
                     Text(model.exportFormat == .jpg ? "JPG usa fondo blanco y compresión con pérdida." : "Conserva la transparencia de la imagen.")
                         .font(.system(size: 10)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-            }.padding(22)
+                .padding(22)
         }.background(Theme.panel)
     }
 
