@@ -14,10 +14,13 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 enum ImageExporter {
     static func write(_ result: PixelResult, format: ExportFormat, scale: Int, to url: URL,
                       pattern: PatternOptions? = nil) throws {
-        let image = try pattern.map { try PatternRenderer.image(result, cellSize: scale, options: $0) } ?? result.cgImage(scale: scale)
+        guard (1...32).contains(scale) else { throw PixelError.invalidExport }
+        let size = pattern.map { PatternRenderer.size(result, cellSize: scale, options: $0) }
+            ?? CGSize(width: result.width * scale, height: result.height * scale)
+        guard size.width <= 8192, size.height <= 8192 else { throw PixelError.invalidExport }
         let data = NSMutableData()
         if format == .pdf {
-            var box = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            var box = CGRect(origin: .zero, size: size)
             guard let consumer = CGDataConsumer(data: data), let context = CGContext(consumer: consumer, mediaBox: &box, nil)
             else { throw PixelError.exportFailed }
             context.beginPDFPage(nil)
@@ -25,11 +28,12 @@ enum ImageExporter {
                 PatternRenderer.draw(result, in: context, cellSize: scale, options: pattern)
             } else {
                 context.interpolationQuality = .none
-                context.draw(image, in: box)
+                context.draw(try result.cgImage(), in: box)
             }
             context.endPDFPage()
             context.closePDF()
         } else {
+            let image = try pattern.map { try PatternRenderer.image(result, cellSize: scale, options: $0) } ?? result.cgImage(scale: scale)
             guard let destination = CGImageDestinationCreateWithData(data, format.type.identifier as CFString, 1, nil)
             else { throw PixelError.exportFailed }
             var output = image

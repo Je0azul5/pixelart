@@ -23,7 +23,7 @@ La matriz `grid[fila][columna]` es el documento de trabajo; la vista dibuja dire
 - **Cuentagotas:** selecciona el RGB exacto de una casilla; identifica las vacías sin asignarles un color.
 - **Bote:** rellena las casillas del mismo color conectadas por sus lados.
 - **Color:** elige cualquier color sólido, sin transparencia parcial.
-- **Deshacer / Rehacer:** botones o `⌘Z` / `⇧⌘Z`. Cada trazo, relleno o reemplazo es una acción; se conservan hasta 100 acciones mediante cambios por celda.
+- **Deshacer / Rehacer:** botones o `⌘Z` / `⇧⌘Z`. Cada trazo, relleno o reemplazo es una acción; se conservan hasta 100 acciones mediante cambios compactos por celda, con un presupuesto de 16 MiB para los cambios retenidos. Los cambios más antiguos se descartan al alcanzar ese presupuesto.
 
 El zoom cambia solo el tamaño visual de los cuadrados. Usa las barras de desplazamiento para recorrer el patrón ampliado y **Ver completo** para ajustarlo al espacio disponible. Cuadrícula, coordenadas, símbolos, fondo y zoom conservan las ediciones. Reducir el máximo de colores actúa sobre la matriz editada y se puede deshacer. Cambiar dimensiones o parámetros de conversión regenera el patrón desde la imagen original (o desde la matriz si abriste un editable) y comienza un historial nuevo.
 
@@ -74,6 +74,22 @@ También puedes generar un ejemplo de patrón en los tres formatos usando un arc
 bash scripts/test.sh /ruta/a/imagen.png dist/examples
 ```
 
+## CPU y memoria
+
+La paleta mantiene sus recuentos al editar cada casilla, sin volver a recorrer toda la matriz al mostrarla. El lienzo dibuja solo las celdas que intersectan la zona visible y evita repintar al cambiar controles que no afectan al patrón. Los arrastres actualizan la matriz una vez por evento.
+
+La conversión reutiliza el espacio de muestreo, evita pequeñas asignaciones por canal y guarda los errores del tramado en dos filas. La reducción de colores se ejecuta en segundo plano y se cancela cuando un ajuste nuevo la reemplaza. Las exportaciones PDF dibujan directamente el patrón sin crear una imagen ampliada intermedia.
+
+Para repetir las mediciones con una compilación optimizada:
+
+```sh
+bash scripts/benchmark.sh
+# Un solo escenario:
+bash scripts/benchmark.sh dither
+```
+
+Cada escenario se ejecuta en un proceso nuevo. El script informa el tiempo de la operación y el pico RSS mediante `/usr/bin/time -l`. Los casos usan matrices de 512 × 512; las cifras dependen del Mac y de la imagen. La comparación con la versión anterior está en [Tests/PERFORMANCE.md](Tests/PERFORMANCE.md).
+
 ## Código
 
 - `Sources/Pixelart/PixelEngine.swift`: muestreo por casillas, cuantización, tramado y paleta.
@@ -83,7 +99,7 @@ bash scripts/test.sh /ruta/a/imagen.png dist/examples
 - `Sources/Pixelart/ImageExporter.swift`: PNG, JPG y PDF vectorial.
 - `Sources/Pixelart/AppModel.swift`: importación, tareas cancelables y estado.
 - `Sources/Pixelart/ContentView.swift`: interfaz JeXelart en español.
-- `Tests/PixelEngineChecks.swift`: 17 comprobaciones de dimensiones, orientación, paleta, alfa binario, edición, historial, geometría, documentos y exportaciones con lectura de vuelta.
+- `Tests/PixelEngineChecks.swift`: 19 comprobaciones de dimensiones, orientación, paleta, alfa binario, edición, historial, geometría, documentos y exportaciones con lectura de vuelta.
 - `scripts/` y `packaging/`: creación del paquete `.app`.
 
 Las compilaciones, ejemplos e imágenes generadas quedan excluidos de Git.

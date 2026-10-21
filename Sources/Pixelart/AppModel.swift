@@ -6,7 +6,8 @@ import UniformTypeIdentifiers
 final class AppModel {
     var settings = PixelSettings()
     var source: SourceImage?
-    var result: PixelResult?
+    var result: PixelResult? { didSet { resultVersion &+= 1 } }
+    private(set) var resultVersion: UInt64 = 0
     var original: NSImage?
     var busy = false
     var error: String?
@@ -33,9 +34,8 @@ final class AppModel {
         if old.width == settings.width, old.height == settings.height,
            old.fit == settings.fit, old.flatColors == settings.flatColors,
            old.smooth == settings.smooth, old.dither == settings.dither,
-           let result, settings.isValid, !busy, result.width == settings.width, result.height == settings.height {
-            let reduced = PixelEngine.reduce(result, limit: settings.colorCount)
-            replaceResult(reduced)
+           let result, settings.isValid, result.width == settings.width, result.height == settings.height {
+            render(reducing: result)
         } else { render() }
     }
 
@@ -53,21 +53,27 @@ final class AppModel {
     }
 
     func edit(row: Int, column: Int, initial: Bool) {
-        guard !busy, settings.isValid, !showOriginal, var current = result,
-              row >= 0, row < current.height, column >= 0, column < current.width else { return }
+        edit(cells: [CellAddress(row: row, column: column)], initial: initial)
+    }
+
+    func edit(cells: [CellAddress], initial: Bool) {
+        guard !busy, settings.isValid, !showOriginal, var current = result, let first = cells.first,
+              first.row >= 0, first.row < current.height, first.column >= 0, first.column < current.width else { return }
+        var changed = false
         switch tool {
         case .eyedropper:
             if initial {
-                let color = current[row, column]
+                let color = current[first.row, first.column]
                 if color.a > 0 { select(color); message = color.hex }
                 else { message = "Casilla vacía" }
             }
-        case .pencil: history.set(paintColor, row: row, column: column, in: &current)
-        case .eraser: history.set(RGBA(r: 0, g: 0, b: 0, a: 0), row: row, column: column, in: &current)
+        case .pencil, .eraser:
+            let color = tool == .pencil ? paintColor : RGBA(r: 0, g: 0, b: 0, a: 0)
+            for cell in cells { changed = history.set(color, row: cell.row, column: cell.column, in: &current) || changed }
         case .fill:
-            if initial { history.fill(paintColor, row: row, column: column, in: &current) }
+            if initial { changed = history.fill(paintColor, row: first.row, column: first.column, in: &current) }
         }
-        result = current
+        if changed { result = current }
     }
 
     func endStroke() { history.commit() }
@@ -81,9 +87,10 @@ final class AppModel {
     }
     func replaceColor(_ color: RGBA) {
         guard !busy, var current = result else { return }
+        let replacement = paintColor
         for row in 0..<current.height {
             for column in 0..<current.width where current[row, column] == color {
-                history.set(paintColor, row: row, column: column, in: &current)
+                history.set(replacement, row: row, column: column, in: &current)
             }
         }
         result = current; history.commit()
@@ -180,12 +187,13 @@ final class AppModel {
         }
     }
 
-    func render() {
+    func render(reducing: PixelResult? = nil) {
         work?.cancel()
         let token = UUID(); generation = token
         guard settings.isValid else { busy = false; return }
-        let input: CGImage
-        if let source { input = source.image }
+        let input: CGImage?
+        if reducing != nil { input = nil }
+        else if let source { input = source.image }
         else if let result, let image = try? result.cgImage() { input = image }
         else { busy = false; return }
         let options = settings
@@ -195,12 +203,14 @@ final class AppModel {
             do {
                 try await Task.sleep(for: .milliseconds(180))
                 let task = Task.detached(priority: .userInitiated) {
-                    try PixelEngine.render(source: input, settings: options)
+                    if let reducing { return try PixelEngine.reduce(reducing, limit: options.colorCount) }
+                    guard let input else { throw PixelError.invalidImage }
+                    return try PixelEngine.render(source: input, settings: options)
                 }
                 let converted = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
                 guard generation == token, !Task.isCancelled else { return }
-                result = converted
-                history = GridHistory()
+                if reducing != nil { replaceResult(converted) }
+                else { result = converted; history = GridHistory() }
                 busy = false
             } catch is CancellationError {
                 // A newer edit owns the preview now.

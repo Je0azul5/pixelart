@@ -73,12 +73,27 @@ enum PatternRenderer {
         context.fill(CGRect(origin: .zero, size: size))
         context.setShouldAntialias(false)
         context.setShouldSmoothFonts(false)
-        for row in 0..<result.height {
-            for col in 0..<result.width {
+        let clip = context.boundingBoxOfClipPath.intersection(CGRect(origin: .zero, size: size))
+        guard !clip.isNull else { return }
+        let expanded = clip.insetBy(dx: -1, dy: -1)
+        let firstColumn = max(0, min(result.width, Int(floor((expanded.minX - margin) / cell))))
+        let endColumn = max(firstColumn, min(result.width, Int(ceil((expanded.maxX - margin) / cell))))
+        let firstBottomRow = max(0, min(result.height, Int(floor((expanded.minY - margin) / cell))))
+        let endBottomRow = max(firstBottomRow, min(result.height, Int(ceil((expanded.maxY - margin) / cell))))
+        let firstRow = result.height - endBottomRow, endRow = result.height - firstBottomRow
+        var colorCache: [RGBA: CGColor] = [:]
+        for row in firstRow..<endRow {
+            for col in firstColumn..<endColumn {
                 let p = result[row, col]
                 guard p.a > 0 else { continue }
-                context.setFillColor(CGColor(srgbRed: CGFloat(p.r) / 255, green: CGFloat(p.g) / 255,
-                                            blue: CGFloat(p.b) / 255, alpha: CGFloat(p.a) / 255))
+                let fill: CGColor
+                if let cached = colorCache[p] { fill = cached }
+                else {
+                    fill = CGColor(srgbRed: CGFloat(p.r) / 255, green: CGFloat(p.g) / 255,
+                                   blue: CGFloat(p.b) / 255, alpha: CGFloat(p.a) / 255)
+                    colorCache[p] = fill
+                }
+                context.setFillColor(fill)
                 context.fill(CGRect(x: margin + CGFloat(col) * cell,
                                     y: margin + CGFloat(result.height - row - 1) * cell,
                                     width: cell, height: cell))
@@ -97,18 +112,22 @@ enum PatternRenderer {
                 ])
                 lines[symbol] = CTLineCreateWithAttributedString(text)
             }
-            for row in 0..<result.height {
-                for col in 0..<result.width {
+            var boundsCache: [String: CGRect] = [:]
+            let lightInk = Set(result.palette.filter { PatternOptions.usesLightInk(for: $0.color) }.map(\.color))
+            for row in firstRow..<endRow {
+                for col in firstColumn..<endColumn {
                     let pixel = result[row, col]
                     guard pixel.a > 0 else { continue }
                     let color = RGBA(r: pixel.r, g: pixel.g, b: pixel.b)
                     guard !options.hiddenSymbolColors.contains(color), let symbol = symbols[color], let line = lines[symbol] else { continue }
-                    let bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+                    let bounds: CGRect
+                    if let cached = boundsCache[symbol] { bounds = cached }
+                    else { bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds); boundsCache[symbol] = bounds }
                     context.saveGState()
                     let rect = CGRect(x: margin + CGFloat(col) * cell, y: margin + CGFloat(result.height - row - 1) * cell,
                                       width: cell, height: cell)
                     context.clip(to: rect.insetBy(dx: cell * 0.1, dy: cell * 0.1))
-                    context.setFillColor(CGColor(gray: PatternOptions.usesLightInk(for: pixel) ? 1 : 0, alpha: 1))
+                    context.setFillColor(CGColor(gray: lightInk.contains(color) ? 1 : 0, alpha: 1))
                     context.textMatrix = .identity
                     context.textPosition = CGPoint(x: rect.midX - bounds.midX, y: rect.midY - bounds.midY)
                     CTLineDraw(line, context)
@@ -120,11 +139,11 @@ enum PatternRenderer {
             context.setShouldAntialias(false)
             context.setStrokeColor(CGColor(srgbRed: 0.25, green: 0.25, blue: 0.25, alpha: 1))
             context.setLineWidth(1)
-            for col in 0...result.width {
+            for col in firstColumn...endColumn {
                 let x = margin + CGFloat(col) * cell + 0.5
                 context.move(to: CGPoint(x: x, y: margin)); context.addLine(to: CGPoint(x: x, y: margin + height))
             }
-            for row in 0...result.height {
+            for row in firstBottomRow...endBottomRow {
                 let y = margin + CGFloat(row) * cell + 0.5
                 context.move(to: CGPoint(x: margin, y: y)); context.addLine(to: CGPoint(x: margin + width, y: y))
             }
@@ -135,6 +154,7 @@ enum PatternRenderer {
             context.setShouldAntialias(false)
             let font = CTFontCreateWithName("Menlo" as CFString, min(12, max(7, cell * 0.65)), nil)
             func label(_ number: Int, x: CGFloat, y: CGFloat) {
+                guard CGRect(x: x - 16, y: y - 8, width: 32, height: 16).intersects(clip) else { return }
                 let text = NSAttributedString(string: String(number), attributes: [
                     NSAttributedString.Key(kCTFontAttributeName as String): font,
                     NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 0.12, alpha: 1)

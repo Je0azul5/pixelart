@@ -7,6 +7,9 @@ struct RGBA: Hashable, Sendable, Codable {
     var b: UInt8
     var a: UInt8 = 255
 
+    var sortKey: UInt32 { UInt32(r) << 16 | UInt32(g) << 8 | UInt32(b) }
+    var vector: SIMD3<Double> { SIMD3(Double(r), Double(g), Double(b)) }
+
     var hex: String { String(format: "#%02X%02X%02X", r, g, b) }
 }
 
@@ -43,13 +46,10 @@ struct PixelResult: Sendable, Equatable {
     let height: Int
     private(set) var grid: [[RGBA]]
     var pixels: [RGBA] { grid.flatMap { $0 } }
+    private var colorCounts: [RGBA: Int]
     var palette: [PaletteColor] {
-        var counts: [RGBA: Int] = [:]
-        for row in grid {
-            for color in row where color.a > 0 { counts[color, default: 0] += 1 }
-        }
-        return counts.map { PaletteColor(color: $0.key, count: $0.value) }.sorted {
-            $0.count == $1.count ? $0.color.hex < $1.color.hex : $0.count > $1.count
+        colorCounts.map { PaletteColor(color: $0.key, count: $0.value) }.sorted {
+            $0.count == $1.count ? $0.color.sortKey < $1.color.sortKey : $0.count > $1.count
         }
     }
 
@@ -57,11 +57,23 @@ struct PixelResult: Sendable, Equatable {
         precondition((1...512).contains(width) && (1...512).contains(height) && pixels.count == width * height)
         self.width = width; self.height = height
         grid = (0..<height).map { row in Array(pixels[(row * width)..<((row + 1) * width)]) }
+        colorCounts = [:]
+        for color in pixels where color.a > 0 { colorCounts[color, default: 0] += 1 }
     }
 
     subscript(row: Int, column: Int) -> RGBA {
         get { grid[row][column] }
-        set { grid[row][column] = newValue.a == 0 ? RGBA(r: 0, g: 0, b: 0, a: 0) : RGBA(r: newValue.r, g: newValue.g, b: newValue.b) }
+        set {
+            let color = newValue.a == 0 ? RGBA(r: 0, g: 0, b: 0, a: 0) : RGBA(r: newValue.r, g: newValue.g, b: newValue.b)
+            let old = grid[row][column]
+            guard old != color else { return }
+            grid[row][column] = color
+            if old.a > 0 {
+                if colorCounts[old] == 1 { colorCounts.removeValue(forKey: old) }
+                else { colorCounts[old, default: 0] -= 1 }
+            }
+            if color.a > 0 { colorCounts[color, default: 0] += 1 }
+        }
     }
 
     func cgImage(scale: Int = 1) throws -> CGImage {
@@ -69,15 +81,21 @@ struct PixelResult: Sendable, Equatable {
             throw PixelError.invalidExport
         }
         let w = width * scale, h = height * scale
-        var data = [UInt8](repeating: 0, count: w * h * 4)
-        for y in 0..<h {
-            for x in 0..<w {
-                let p = grid[y / scale][x / scale]
-                let i = (y * w + x) * 4
-                data[i] = p.r; data[i + 1] = p.g; data[i + 2] = p.b; data[i + 3] = p.a
+        guard let data = CFDataCreateMutable(nil, w * h * 4) else { throw PixelError.renderFailed }
+        CFDataSetLength(data, w * h * 4)
+        let bytes = CFDataGetMutableBytePtr(data)!
+        for row in 0..<height {
+            let start = bytes.advanced(by: row * scale * w * 4)
+            for column in 0..<width {
+                let p = grid[row][column]
+                for dx in 0..<scale {
+                    let i = (column * scale + dx) * 4
+                    start[i] = p.r; start[i + 1] = p.g; start[i + 2] = p.b; start[i + 3] = p.a
+                }
             }
+            for dy in 1..<scale { memcpy(start.advanced(by: dy * w * 4), start, w * 4) }
         }
-        guard let provider = CGDataProvider(data: Data(data) as CFData),
+        guard let provider = CGDataProvider(data: data),
               let image = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32,
                                   bytesPerRow: w * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
@@ -142,6 +160,9 @@ enum PixelEngine {
         }
         var pixels = [RGBA]()
         pixels.reserveCapacity(w * h)
+        var sampleKeys = [UInt32](repeating: 0, count: 16)
+        var sampleCounts = [Int](repeating: 0, count: 16)
+        var representatives = [RGBA](repeating: RGBA(r: 0, g: 0, b: 0), count: 16)
         for row in 0..<h {
             try Task.checkCancellation()
             for col in 0..<w {
@@ -153,9 +174,7 @@ enum PixelEngine {
                     continue
                 }
                 // Choose the dominant color in each cell, rather than averaging edges into muddy colors.
-                var counts: [UInt32: Int] = [:]
-                var representatives: [UInt32: RGBA] = [:]
-                var order: [UInt32] = []
+                var used = 0
                 for dy in 0..<samples {
                     for dx in 0..<samples {
                         var p = read(((row * samples + dy) * sampleWidth + col * samples + dx) * 4)
@@ -168,94 +187,113 @@ enum PixelEngine {
                         }
                         p.r = flatChannel(p.r); p.g = flatChannel(p.g); p.b = flatChannel(p.b)
                         let key: UInt32 = p.a == 0 ? 0x1000000 : UInt32(p.r >> 3) << 10 | UInt32(p.g >> 3) << 5 | UInt32(p.b >> 3)
-                        if counts[key] == nil { order.append(key); representatives[key] = p }
-                        counts[key, default: 0] += 1
-                    }
-                }
-                let dominant = order.max { counts[$0]! < counts[$1]! }!
-                pixels.append(representatives[dominant]!)
-            }
-        }
-        let colors = quantize(pixels, limit: settings.colorCount)
-        if !colors.isEmpty {
-            var errors = [[Double]](repeating: [0, 0, 0], count: pixels.count)
-            var cache: [RGBA: RGBA] = [:]
-            for i in pixels.indices {
-                if i % w == 0 { try Task.checkCancellation() }
-                let original = pixels[i]
-                guard original.a > 0 else { continue }
-                let input = [Double(original.r), Double(original.g), Double(original.b)]
-                let adjusted = zip(input, errors[i]).map { min(255, max(0, $0 + $1)) }
-                let selected: RGBA
-                if !settings.dither, let cached = cache[original] {
-                    selected = cached
-                } else {
-                    selected = colors.min { distance($0, adjusted) < distance($1, adjusted) }!
-                    if !settings.dither { cache[original] = selected }
-                }
-                pixels[i] = RGBA(r: selected.r, g: selected.g, b: selected.b, a: original.a)
-                if settings.dither {
-                    let error = zip(adjusted, [Double(selected.r), Double(selected.g), Double(selected.b)]).map(-)
-                    let x = i % w, y = i / w
-                    for (dx, dy, weight) in [(1, 0, 7.0/16), (-1, 1, 3.0/16), (0, 1, 5.0/16), (1, 1, 1.0/16)] {
-                        let nx = x + dx, ny = y + dy
-                        if nx >= 0 && nx < w && ny < h {
-                            for channel in 0..<3 { errors[ny * w + nx][channel] += error[channel] * weight }
+                        if let index = (0..<used).first(where: { sampleKeys[$0] == key }) {
+                            sampleCounts[index] += 1
+                        } else {
+                            sampleKeys[used] = key; sampleCounts[used] = 1; representatives[used] = p
+                            used += 1
                         }
                     }
                 }
+                let dominant = (0..<used).max { sampleCounts[$0] < sampleCounts[$1] }!
+                pixels.append(representatives[dominant])
             }
         }
-        var counts: [RGBA: Int] = [:]
-        for pixel in pixels where pixel.a > 0 {
-            counts[RGBA(r: pixel.r, g: pixel.g, b: pixel.b), default: 0] += 1
-        }
-        let entries: [PaletteColor] = counts.map { PaletteColor(color: $0.key, count: $0.value) }
-        let palette = entries.sorted { (left: PaletteColor, right: PaletteColor) -> Bool in
-            if left.count == right.count { return left.color.hex < right.color.hex }
-            return left.count > right.count
-        }
-        return PixelResult(width: w, height: h, pixels: pixels, palette: palette)
+        let colors = try quantize(pixels, limit: settings.colorCount)
+        try applyPalette(&pixels, width: w, colors: colors, dither: settings.dither)
+        return PixelResult(width: w, height: h, pixels: pixels)
     }
 
-    static func reduce(_ result: PixelResult, limit: Int) -> PixelResult {
-        let colors = quantize(result.pixels, limit: max(2, min(64, limit)))
-        let mapped = result.pixels.map { p -> RGBA in
-            guard p.a > 0 else { return p }
-            return colors.min { distance($0, [Double(p.r), Double(p.g), Double(p.b)]) < distance($1, [Double(p.r), Double(p.g), Double(p.b)]) } ?? p
-        }
-        return PixelResult(width: result.width, height: result.height, pixels: mapped)
+    static func reduce(_ result: PixelResult, limit: Int) throws -> PixelResult {
+        var pixels = result.pixels
+        let colors = try quantize(pixels, limit: max(2, min(64, limit)))
+        try applyPalette(&pixels, width: result.width, colors: colors, dither: false)
+        return PixelResult(width: result.width, height: result.height, pixels: pixels)
     }
 
-    private static func distance(_ color: RGBA, _ value: [Double]) -> Double {
-        let r = Double(color.r) - value[0], g = Double(color.g) - value[1], b = Double(color.b) - value[2]
-        return r * r + g * g + b * b
+    private static func nearest(_ value: SIMD3<Double>, colors: [RGBA]) -> RGBA {
+        var best = colors[0], bestDistance = Double.infinity
+        for color in colors {
+            let delta = color.vector - value
+            let distance = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z
+            if distance < bestDistance { best = color; bestDistance = distance }
+        }
+        return best
+    }
+
+    private static func applyPalette(_ pixels: inout [RGBA], width: Int, colors: [RGBA], dither: Bool) throws {
+        guard !colors.isEmpty else { return }
+        if !dither {
+            var cache: [RGBA: RGBA] = [:]
+            for i in pixels.indices {
+                if i % width == 0 { try Task.checkCancellation() }
+                let original = pixels[i]
+                guard original.a > 0 else { continue }
+                let selected: RGBA
+                if let cached = cache[original] { selected = cached }
+                else {
+                    selected = nearest(original.vector, colors: colors)
+                    cache[original] = selected
+                }
+                pixels[i] = RGBA(r: selected.r, g: selected.g, b: selected.b, a: original.a)
+            }
+            return
+        }
+        // Floyd–Steinberg only needs the current and next rows, including a one-cell halo.
+        var current = [SIMD3<Double>](repeating: .zero, count: width + 2)
+        var next = current
+        for row in 0..<(pixels.count / width) {
+            try Task.checkCancellation()
+            for column in 0..<width {
+                let i = row * width + column, original = pixels[i]
+                guard original.a > 0 else { continue }
+                let input = original.vector + current[column + 1]
+                let adjusted = SIMD3(min(255, max(0, input.x)), min(255, max(0, input.y)), min(255, max(0, input.z)))
+                let selected = nearest(adjusted, colors: colors)
+                pixels[i] = RGBA(r: selected.r, g: selected.g, b: selected.b, a: original.a)
+                let error = adjusted - selected.vector
+                current[column + 2] += error * (7.0 / 16)
+                next[column] += error * (3.0 / 16)
+                next[column + 1] += error * (5.0 / 16)
+                next[column + 2] += error * (1.0 / 16)
+            }
+            swap(&current, &next)
+            for i in next.indices { next[i] = .zero }
+        }
     }
 
     // Weighted median cut: frequent colors contribute proportionally to each representative.
-    private static func quantize(_ pixels: [RGBA], limit: Int) -> [RGBA] {
+    private static func quantize(_ pixels: [RGBA], limit: Int) throws -> [RGBA] {
         var histogram: [RGBA: Int] = [:]
         for p in pixels where p.a > 0 { histogram[RGBA(r: p.r, g: p.g, b: p.b), default: 0] += 1 }
-        if histogram.count <= limit { return histogram.keys.sorted { $0.hex < $1.hex } }
+        if histogram.count <= limit { return histogram.keys.sorted { $0.sortKey < $1.sortKey } }
         typealias Entry = (color: RGBA, count: Int)
-        func channels(_ p: RGBA) -> [Int] { [Int(p.r), Int(p.g), Int(p.b)] }
+        func channel(_ p: RGBA, _ index: Int) -> Int {
+            switch index { case 0: Int(p.r); case 1: Int(p.g); default: Int(p.b) }
+        }
         func spread(_ box: [Entry]) -> (range: Int, channel: Int) {
-            let ranges = (0..<3).map { c in
-                let values = box.map { channels($0.color)[c] }
-                return values.max()! - values.min()!
+            var minimum = SIMD3<Int>(repeating: 255), maximum = SIMD3<Int>(repeating: 0)
+            for entry in box {
+                let p = entry.color
+                minimum.x = min(minimum.x, Int(p.r)); maximum.x = max(maximum.x, Int(p.r))
+                minimum.y = min(minimum.y, Int(p.g)); maximum.y = max(maximum.y, Int(p.g))
+                minimum.z = min(minimum.z, Int(p.b)); maximum.z = max(maximum.z, Int(p.b))
             }
-            let channel = ranges.indices.max { ranges[$0] < ranges[$1] }!
-            return (ranges[channel], channel)
+            let ranges = maximum &- minimum
+            let selected = (0..<3).max { ranges[$0] < ranges[$1] }!
+            return (ranges[selected], selected)
         }
         var boxes: [[Entry]] = [histogram.map { (color: $0.key, count: $0.value) }]
+        var spreads = boxes.map(spread)
         while boxes.count < limit {
+            try Task.checkCancellation()
             guard let index = boxes.indices.filter({ boxes[$0].count > 1 }).max(by: {
-                spread(boxes[$0]).range < spread(boxes[$1]).range
+                spreads[$0].range < spreads[$1].range
             }) else { break }
-            let channel = spread(boxes[index]).channel
+            let selectedChannel = spreads.remove(at: index).channel
             let sorted = boxes.remove(at: index).sorted {
-                let a = channels($0.color)[channel], b = channels($1.color)[channel]
-                return a == b ? $0.color.hex < $1.color.hex : a < b
+                let a = channel($0.color, selectedChannel), b = channel($1.color, selectedChannel)
+                return a == b ? $0.color.sortKey < $1.color.sortKey : a < b
             }
             let half = sorted.reduce(0) { $0 + $1.count } / 2
             var sum = 0, split = 1
@@ -263,11 +301,13 @@ enum PixelEngine {
                 sum += sorted[i].count; split = i + 1
                 if sum >= half { break }
             }
-            boxes.append(Array(sorted[..<split])); boxes.append(Array(sorted[split...]))
+            let left = Array(sorted[..<split]), right = Array(sorted[split...])
+            boxes.append(left); boxes.append(right)
+            spreads.append(spread(left)); spreads.append(spread(right))
         }
         return boxes.map { box in
             let total = box.reduce(0) { $0 + $1.count }
-            let rgb = (0..<3).map { c in UInt8(box.reduce(0) { $0 + channels($1.color)[c] * $1.count } / total) }
+            let rgb = (0..<3).map { c in UInt8(box.reduce(0) { $0 + channel($1.color, c) * $1.count } / total) }
             return RGBA(r: rgb[0], g: rgb[1], b: rgb[2])
         }
     }

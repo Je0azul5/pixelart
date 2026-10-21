@@ -4,6 +4,7 @@ import SwiftUI
 struct GridCanvas: NSViewRepresentable {
     let model: AppModel
     let result: PixelResult
+    let resultVersion: UInt64
     let cellSize: Int
     let displayScale: CGFloat
     let options: PatternOptions
@@ -11,7 +12,10 @@ struct GridCanvas: NSViewRepresentable {
 
     func makeNSView(context: Context) -> CellCanvasView { CellCanvasView() }
     func updateNSView(_ view: CellCanvasView, context: Context) {
+        guard view.result == nil || view.resultVersion != resultVersion || view.cellSize != cellSize
+                || view.options != options || view.patternMode != patternMode || view.displayScale != displayScale else { return }
         view.model = model; view.result = result; view.cellSize = cellSize
+        view.resultVersion = resultVersion
         view.options = options; view.patternMode = patternMode; view.displayScale = displayScale
         view.needsDisplay = true
     }
@@ -20,6 +24,7 @@ struct GridCanvas: NSViewRepresentable {
 final class CellCanvasView: NSView {
     var model: AppModel?
     var result: PixelResult?
+    var resultVersion: UInt64 = 0
     var cellSize = 16
     var displayScale: CGFloat = 1
     var options = PatternOptions()
@@ -30,6 +35,7 @@ final class CellCanvasView: NSView {
         guard let result, let context = NSGraphicsContext.current?.cgContext else { return }
         context.saveGState()
         defer { context.restoreGState() }
+        context.clip(to: dirtyRect)
         context.scaleBy(x: displayScale, y: displayScale)
         if patternMode {
             PatternRenderer.draw(result, in: context, cellSize: cellSize, options: options)
@@ -66,13 +72,16 @@ final class CellCanvasView: NSView {
         let dx = abs(next.column - x), dy = -abs(next.row - y)
         let sx = x < next.column ? 1 : -1, sy = y < next.row ? 1 : -1
         var error = dx + dy
+        var cells: [CellAddress] = []
+        cells.reserveCapacity(max(dx, -dy) + 1)
         while true {
-            model?.edit(row: y, column: x, initial: false)
+            cells.append(CellAddress(row: y, column: x))
             if x == next.column && y == next.row { break }
             let doubled = 2 * error
             if doubled >= dy { error += dy; x += sx }
             if doubled <= dx { error += dx; y += sy }
         }
+        model?.edit(cells: cells, initial: false)
     }
 
     override func mouseUp(with event: NSEvent) {

@@ -17,15 +17,17 @@ struct PixelEngineChecks {
         try testSymbolsAndPerColorVisibility()
         testUniqueSymbolAssignments()
         try testRequestedDimensionsAndSolidCells()
-        testCellEditingAndHistory()
+        try testCellEditingAndHistory()
         testCellHitTesting()
         try testEditableDocument()
         try testSharpRasterColors()
         try await testAppEditingAndImport()
+        testIncrementalPaletteAndHistoryBudget()
+        try testClippedRenderingMatchesFullPattern()
         if CommandLine.arguments.count == 3 {
             try exportExample(input: CommandLine.arguments[1], directory: CommandLine.arguments[2])
         }
-        print("✓ 17 comprobaciones: dimensiones exactas, celdas sólidas, edición, historial, coordenadas, archivo editable y exportaciones")
+        print("✓ 19 comprobaciones: dimensiones exactas, celdas sólidas, edición, historial, coordenadas, archivo editable y exportaciones")
     }
     private static func fixture() throws -> CGImage {
         // Distinct quadrants expose flips, interpolation and unintended palette changes.
@@ -258,7 +260,7 @@ struct PixelEngineChecks {
         }
     }
 
-    static func testCellEditingAndHistory() {
+    static func testCellEditingAndHistory() throws {
         let red = RGBA(r: 255, g: 0, b: 0), blue = RGBA(r: 0, g: 0, b: 255)
         let empty = RGBA(r: 0, g: 0, b: 0, a: 0)
         var result = PixelResult(width: 3, height: 2, pixels: [red, blue, red, red, blue, red])
@@ -283,7 +285,7 @@ struct PixelEngineChecks {
         history = GridHistory()
         history.fill(empty, row: 0, column: 0, in: &diagonal); history.commit()
         expectEqual(diagonal.pixels, [empty, blue, blue, red])
-        let reduced = PixelEngine.reduce(result, limit: 2)
+        let reduced = try PixelEngine.reduce(result, limit: 2)
         expectAtMost(reduced.palette.count, 2)
         expectEqual(reduced.width, result.width); expectEqual(reduced.height, result.height)
     }
@@ -381,6 +383,10 @@ struct PixelEngineChecks {
         model.tool = .eraser; model.edit(row: 0, column: 0, initial: true); model.endStroke()
         expectEqual(model.result?[0, 0].a, 0)
         model.undo(); expectEqual(model.result?[0, 0], blue)
+        let revision = model.resultVersion
+        model.select(blue); model.tool = .pencil
+        model.edit(row: 0, column: 0, initial: true); model.endStroke()
+        expectEqual(model.resultVersion, revision)
         model.select(RGBA(r: 0, g: 255, b: 0)); model.replaceColor(blue)
         expectEqual(model.result?[0, 0].hex, "#00FF00")
         model.undo(); expectEqual(model.result?[0, 0], blue)
@@ -394,8 +400,68 @@ struct PixelEngineChecks {
         expectEqual(model.result, edited)
         let old = model.settings
         model.settings.colorCount = 2; model.settingsChanged(from: old)
+        for _ in 0..<250 {
+            if !model.busy { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        expectTrue(!model.busy)
         expectEqual(model.result?.width, 25); expectEqual(model.result?.height, 25)
         expectAtMost(model.result!.palette.count, 2)
+    }
+
+    static func testIncrementalPaletteAndHistoryBudget() {
+        let red = RGBA(r: 255, g: 0, b: 0), blue = RGBA(r: 0, g: 0, b: 255)
+        let empty = RGBA(r: 0, g: 0, b: 0, a: 0)
+        var result = PixelResult(width: 3, height: 2, pixels: [red, blue, red, empty, blue, red])
+        let snapshot = result
+        var history = GridHistory(byteLimit: 2 * MemoryLayout<CellChange>.stride)
+        history.set(blue, row: 0, column: 0, in: &result); history.commit()
+        history.set(empty, row: 0, column: 1, in: &result); history.commit()
+        history.set(blue, row: 1, column: 2, in: &result); history.commit()
+        expectAtMost(history.retainedBytes, 2 * MemoryLayout<CellChange>.stride)
+        expectEqual(snapshot.palette.reduce(0) { $0 + $1.count }, 5)
+        expectEqual(snapshot.palette.first?.color, red)
+        history.undo(in: &result); history.undo(in: &result)
+        expectTrue(!history.canUndo)
+        expectEqual(result[0, 0], blue) // oldest action was evicted
+        expectEqual(result[0, 1], blue); expectEqual(result[1, 2], red)
+        history.redo(in: &result)
+        history.set(red, row: 1, column: 0, in: &result); history.commit()
+        expectTrue(!history.canRedo)
+        var expected: [RGBA: Int] = [:]
+        for p in result.pixels where p.a > 0 { expected[p, default: 0] += 1 }
+        expectEqual(Dictionary(uniqueKeysWithValues: result.palette.map { ($0.color, $0.count) }), expected)
+        var large = PixelResult(width: 128, height: 128, pixels: Array(repeating: red, count: 128 * 128))
+        history = GridHistory()
+        history.fill(blue, row: 64, column: 64, in: &large); history.commit()
+        expectEqual(large.palette.count, 1); expectEqual(large.palette[0].count, 128 * 128)
+        history.undo(in: &large); expectEqual(large.palette[0].color, red)
+        history.redo(in: &large); expectEqual(large.palette[0].color, blue)
+    }
+
+    static func testClippedRenderingMatchesFullPattern() throws {
+        let result = try PixelEngine.render(source: fixture(), settings: PixelSettings(width: 9, height: 7))
+        for symbols in [false, true] {
+            let options = PatternOptions(symbolsEnabled: symbols)
+            let full = try PatternRenderer.image(result, cellSize: 16, options: options)
+            let fullData = full.dataProvider!.data! as Data
+            for clip in [CGRect(x: 39, y: 43, width: 38, height: 31), CGRect(x: 0, y: 128, width: 170, height: 40), CGRect(x: 0, y: 0, width: 25, height: 168)] {
+                let context = CGContext(data: nil, width: full.width, height: full.height, bitsPerComponent: 8,
+                                        bytesPerRow: full.bytesPerRow, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                context.clip(to: clip)
+                PatternRenderer.draw(result, in: context, cellSize: 16, options: options)
+                let partial = context.makeImage()!
+                let partialData = partial.dataProvider!.data! as Data
+                // Raw image rows start at the top; the drawing clip uses bottom-left coordinates.
+                for y in (full.height - Int(clip.maxY))..<(full.height - Int(clip.minY)) {
+                    for x in Int(clip.minX)..<Int(clip.maxX) {
+                        let i = y * full.bytesPerRow + x * 4
+                        expectEqual(Array(partialData[i..<(i + 4)]), Array(fullData[i..<(i + 4)]))
+                    }
+                }
+            }
+        }
     }
 
     static func exportExample(input: String, directory: String) throws {

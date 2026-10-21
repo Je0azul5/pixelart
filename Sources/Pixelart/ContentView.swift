@@ -191,7 +191,7 @@ struct ContentView: View {
                         let cell = max(1, Int(floor(max(1, available) * model.zoom)))
                         let displayScale: CGFloat = model.zoom == 1 ? min(1, max(0.01, available)) : 1
                         ScrollView([.horizontal, .vertical]) {
-                            GridCanvas(model: model, result: result, cellSize: cell, displayScale: displayScale, options: model.patternOptions, patternMode: model.patternMode)
+                            GridCanvas(model: model, result: result, resultVersion: model.resultVersion, cellSize: cell, displayScale: displayScale, options: model.patternOptions, patternMode: model.patternMode)
                                 .frame(width: CGFloat(result.width * cell + margin) * displayScale, height: CGFloat(result.height * cell + margin) * displayScale)
                                 .padding(16)
                                 .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
@@ -241,10 +241,11 @@ struct ContentView: View {
                     .disabled(model.result == nil || model.busy)
             }
             if let result = model.result, !result.palette.isEmpty {
+                let symbols = model.patternOptions.symbolsEnabled ? model.patternOptions.resolvedSymbols(for: result.palette) : [:]
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         ForEach(result.palette) { entry in
-                            paletteEntry(entry)
+                            paletteEntry(entry, symbol: symbols[entry.color] ?? PatternOptions.symbols[0])
                         }
                     }.padding(.bottom, 4)
                 }
@@ -258,7 +259,7 @@ struct ContentView: View {
         }.padding(24).background(Theme.panel)
     }
 
-    private func paletteEntry(_ entry: PaletteColor) -> some View {
+    private func paletteEntry(_ entry: PaletteColor, symbol: String) -> some View {
         let visible = !model.patternOptions.hiddenSymbolColors.contains(entry.color)
         return VStack(alignment: .leading, spacing: 6) {
             Button { model.select(entry.color); model.copy(entry.color.hex); model.message = "\(entry.color.hex) seleccionado y copiado" } label: {
@@ -269,7 +270,7 @@ struct ContentView: View {
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(.white.opacity(0.12)))
                         .overlay {
                             if model.patternOptions.symbolsEnabled && visible {
-                                Text(model.symbol(for: entry.color)).font(.system(size: 24, design: .monospaced))
+                                Text(symbol).font(.system(size: 24, design: .monospaced))
                                     .foregroundStyle(PatternOptions.usesLightInk(for: entry.color) ? Color.white : Color.black)
                             }
                         }
@@ -283,7 +284,7 @@ struct ContentView: View {
                 Toggle("Activar", isOn: Binding(get: { visible }, set: { model.setSymbolVisible($0, for: entry.color) }))
                     .font(.system(size: 10)).accessibilityLabel("Activar símbolo para \(entry.color.hex)")
                 Picker("Símbolo para \(entry.color.hex)", selection: Binding(
-                    get: { model.symbol(for: entry.color) }, set: { model.setSymbol($0, for: entry.color) }
+                    get: { symbol }, set: { model.setSymbol($0, for: entry.color) }
                 )) {
                     ForEach(PatternOptions.symbols, id: \.self) { Text($0).tag($0) }
                 }.labelsHidden().frame(width: 78).disabled(!visible)
