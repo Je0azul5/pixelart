@@ -26,8 +26,10 @@ La paleta corresponde al resultado convertido. Las imágenes grandes se reducen 
 
 ```sh
 swift run Pixelart
-swift test
+bash scripts/test.sh
 ```
+
+Las comprobaciones se compilan directamente con Swift y funcionan con Command Line Tools, sin instalar Xcode completo.
 
 ## Crear la aplicación
 
@@ -46,7 +48,7 @@ Para distribuir públicamente con la verificación de Gatekeeper se necesita fir
 - `Sources/Pixelart/ImageExporter.swift`: exportación PNG, JPG y PDF.
 - `Sources/Pixelart/AppModel.swift`: importación, tareas cancelables y estado.
 - `Sources/Pixelart/ContentView.swift`: interfaz en español y vista previa sin interpolación.
-- `Tests/PixelartTests`: dimensiones rectangulares, orientación, paleta, alfa, límites y exportaciones con lectura de vuelta.
+- `Tests/PixelEngineChecks.swift`: dimensiones rectangulares, orientación, paleta, alfa, límites y exportaciones con lectura de vuelta.
 - `scripts/` y `packaging/`: creación del paquete `.app`.
 
 No se envían imágenes a servicios externos. Los archivos generados y las compilaciones quedan excluidos de Git.

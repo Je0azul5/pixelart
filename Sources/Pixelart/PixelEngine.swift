@@ -149,8 +149,10 @@ enum PixelEngine {
         for pixel in pixels where pixel.a > 0 {
             counts[RGBA(r: pixel.r, g: pixel.g, b: pixel.b), default: 0] += 1
         }
-        let palette = counts.map { PaletteColor(color: $0.key, count: $0.value) }.sorted {
-            $0.count == $1.count ? $0.color.hex < $1.color.hex : $0.count > $1.count
+        let entries: [PaletteColor] = counts.map { PaletteColor(color: $0.key, count: $0.value) }
+        let palette = entries.sorted { (left: PaletteColor, right: PaletteColor) -> Bool in
+            if left.count == right.count { return left.color.hex < right.color.hex }
+            return left.count > right.count
         }
         return PixelResult(width: w, height: h, pixels: pixels, palette: palette)
     }
