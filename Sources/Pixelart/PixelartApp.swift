@@ -2,12 +2,12 @@ import SwiftUI
 import AppKit
 
 @main
-struct PixelartApp: App {
+struct JeXelartApp: App {
     @State private var model = AppModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("JeXelart") {
             ContentView(model: model)
                 .frame(minWidth: 980, minHeight: 700)
                 .preferredColorScheme(.dark)

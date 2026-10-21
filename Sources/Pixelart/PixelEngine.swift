@@ -23,10 +23,11 @@ enum ImageFit: String, CaseIterable, Sendable {
 struct PixelSettings: Equatable, Sendable {
     var width = 48
     var height = 48
-    var colorCount = 24
+    var colorCount = 16
     var fit = ImageFit.fit
     var smooth = true
     var dither = false
+    var flatColors = true
 
     var isValid: Bool { (1...512).contains(width) && (1...512).contains(height) && (2...64).contains(colorCount) }
 }
@@ -93,14 +94,17 @@ enum PixelEngine {
     static func render(source: CGImage, settings: PixelSettings) throws -> PixelResult {
         guard settings.isValid else { throw PixelError.invalidSize }
         let w = settings.width, h = settings.height
-        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let samples = settings.flatColors ? 4 : 1
+        let sampleWidth = w * samples, sampleHeight = h * samples
+        var bytes = [UInt8](repeating: 0, count: sampleWidth * sampleHeight * 4)
         try bytes.withUnsafeMutableBytes { buffer in
-            guard let context = CGContext(data: buffer.baseAddress, width: w, height: h,
-                                          bitsPerComponent: 8, bytesPerRow: w * 4,
+            guard let context = CGContext(data: buffer.baseAddress, width: sampleWidth, height: sampleHeight,
+                                          bitsPerComponent: 8, bytesPerRow: sampleWidth * 4,
                                           space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
             else { throw PixelError.renderFailed }
-            context.interpolationQuality = settings.smooth ? .high : .none
+            context.scaleBy(x: CGFloat(samples), y: CGFloat(samples))
+            context.interpolationQuality = settings.flatColors ? .none : (settings.smooth ? .high : .none)
             let sx = Double(w) / Double(source.width), sy = Double(h) / Double(source.height)
             let factor = settings.fit == .fill ? max(sx, sy) : min(sx, sy)
             let dw = settings.fit == .stretch ? Double(w) : Double(source.width) * factor
@@ -108,12 +112,38 @@ enum PixelEngine {
             context.draw(source, in: CGRect(x: (Double(w) - dw) / 2, y: (Double(h) - dh) / 2, width: dw, height: dh))
         }
         try Task.checkCancellation()
-        var pixels: [RGBA] = stride(from: 0, to: bytes.count, by: 4).map { i in
+        func read(_ i: Int) -> RGBA {
             let a = Int(bytes[i + 3])
             guard a > 0 else { return RGBA(r: 0, g: 0, b: 0, a: 0) }
             return RGBA(r: UInt8(min(255, Int(bytes[i]) * 255 / a)),
                         g: UInt8(min(255, Int(bytes[i + 1]) * 255 / a)),
                         b: UInt8(min(255, Int(bytes[i + 2]) * 255 / a)), a: UInt8(a))
+        }
+        var pixels = [RGBA]()
+        pixels.reserveCapacity(w * h)
+        for row in 0..<h {
+            try Task.checkCancellation()
+            for col in 0..<w {
+                if !settings.flatColors {
+                    pixels.append(read((row * w + col) * 4))
+                    continue
+                }
+                // Choose the dominant color in each cell, rather than averaging edges into muddy colors.
+                var counts: [UInt32: Int] = [:]
+                var representatives: [UInt32: RGBA] = [:]
+                var order: [UInt32] = []
+                for dy in 0..<samples {
+                    for dx in 0..<samples {
+                        var p = read(((row * samples + dy) * sampleWidth + col * samples + dx) * 4)
+                        p.a = p.a >= 128 ? 255 : 0
+                        let key: UInt32 = p.a == 0 ? 0x1000000 : UInt32(p.r >> 3) << 10 | UInt32(p.g >> 3) << 5 | UInt32(p.b >> 3)
+                        if counts[key] == nil { order.append(key); representatives[key] = p }
+                        counts[key, default: 0] += 1
+                    }
+                }
+                let dominant = order.max { counts[$0]! < counts[$1]! }!
+                pixels.append(representatives[dominant]!)
+            }
         }
         let colors = quantize(pixels, limit: settings.colorCount)
         if !colors.isEmpty {

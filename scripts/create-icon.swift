@@ -1,6 +1,6 @@
 import AppKit
 
-let directory = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("Pixelart.iconset")
+let directory = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("JeXelart.iconset")
 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 for (name, size) in [("icon_16x16", 16), ("icon_16x16@2x", 32), ("icon_32x32", 32),
                      ("icon_32x32@2x", 64), ("icon_128x128", 128), ("icon_128x128@2x", 256),
@@ -15,11 +15,11 @@ for (name, size) in [("icon_16x16", 16), ("icon_16x16@2x", 32), ("icon_32x32", 3
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = context
     let s = CGFloat(size)
-    NSColor(srgbRed: 0.07, green: 0.078, blue: 0.09, alpha: 1).setFill()
+    NSColor(srgbRed: 0.065, green: 0.035, blue: 0.115, alpha: 1).setFill()
     NSBezierPath(roundedRect: NSRect(x: s * 0.05, y: s * 0.05, width: s * 0.9, height: s * 0.9), xRadius: s * 0.2, yRadius: s * 0.2).fill()
     let unit = s * 0.145, origin = s * 0.21
-    for index in [0, 1, 2, 4, 6, 8, 9, 10, 12] {
-        NSColor(srgbRed: 1, green: 0.43, blue: 0.27, alpha: index == 12 ? 0.4 : 1).setFill()
+    for index in [0, 3, 5, 6, 9, 10, 12, 15] {
+        NSColor(srgbRed: 0.70, green: 0.43, blue: 1, alpha: 1).setFill()
         NSRect(x: origin + CGFloat(index % 4) * unit, y: s - origin - CGFloat(index / 4 + 1) * unit,
                width: unit * 0.9, height: unit * 0.9).fill()
     }

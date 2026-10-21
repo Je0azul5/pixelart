@@ -2,10 +2,10 @@
 import PackageDescription
 
 let package = Package(
-    name: "Pixelart",
+    name: "JeXelart",
     platforms: [.macOS(.v14)],
-    products: [.executable(name: "Pixelart", targets: ["Pixelart"])],
+    products: [.executable(name: "JeXelart", targets: ["JeXelart"])],
     targets: [
-        .executableTarget(name: "Pixelart")
+        .executableTarget(name: "JeXelart", path: "Sources/Pixelart")
     ]
 )

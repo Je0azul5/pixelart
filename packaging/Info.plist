@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDevelopmentRegion</key><string>es</string>
-    <key>CFBundleExecutable</key><string>Pixelart</string>
-    <key>CFBundleIconFile</key><string>Pixelart</string>
-    <key>CFBundleIdentifier</key><string>com.jevstudio.pixelart</string>
-    <key>CFBundleName</key><string>Pixelart</string>
-    <key>CFBundleDisplayName</key><string>Pixelart Studio</string>
+    <key>CFBundleExecutable</key><string>JeXelart</string>
+    <key>CFBundleIconFile</key><string>JeXelart</string>
+    <key>CFBundleIdentifier</key><string>com.jevstudio.jexelart</string>
+    <key>CFBundleName</key><string>JeXelart</string>
+    <key>CFBundleDisplayName</key><string>JeXelart</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>1.1.0</string>
+    <key>CFBundleVersion</key><string>2</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSHumanReadableCopyright</key><string>Pixelart Studio · Je0azul5</string>
+    <key>NSHumanReadableCopyright</key><string>JeXelart · Je0azul5</string>
     <key>CFBundleDocumentTypes</key>
     <array><dict>
         <key>CFBundleTypeName</key><string>Imagen</string>

@@ -5,20 +5,20 @@
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:pixelart}",
-            "name": "Debug Pixelart",
-            "target": "Pixelart",
+            "name": "Debug JeXelart",
+            "target": "JeXelart",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug Pixelart"
+            "preLaunchTask": "swift: Build Debug JeXelart"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
             "cwd": "${workspaceFolder:pixelart}",
-            "name": "Release Pixelart",
-            "target": "Pixelart",
+            "name": "Release JeXelart",
+            "target": "JeXelart",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release Pixelart"
+            "preLaunchTask": "swift: Build Release JeXelart"
         }
     ]
 }

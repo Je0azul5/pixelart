@@ -12,16 +12,21 @@ enum ExportFormat: String, CaseIterable, Identifiable {
 }
 
 enum ImageExporter {
-    static func write(_ result: PixelResult, format: ExportFormat, scale: Int, to url: URL) throws {
-        let image = try result.cgImage(scale: scale)
+    static func write(_ result: PixelResult, format: ExportFormat, scale: Int, to url: URL,
+                      pattern: PatternOptions? = nil) throws {
+        let image = try pattern.map { try PatternRenderer.image(result, cellSize: scale, options: $0) } ?? result.cgImage(scale: scale)
         let data = NSMutableData()
         if format == .pdf {
             var box = CGRect(x: 0, y: 0, width: image.width, height: image.height)
             guard let consumer = CGDataConsumer(data: data), let context = CGContext(consumer: consumer, mediaBox: &box, nil)
             else { throw PixelError.exportFailed }
             context.beginPDFPage(nil)
-            context.interpolationQuality = .none
-            context.draw(image, in: box)
+            if let pattern {
+                PatternRenderer.draw(result, in: context, cellSize: scale, options: pattern)
+            } else {
+                context.interpolationQuality = .none
+                context.draw(image, in: box)
+            }
             context.endPDFPage()
             context.closePDF()
         } else {

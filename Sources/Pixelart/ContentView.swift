@@ -2,11 +2,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum Theme {
-    static let background = Color(red: 0.070, green: 0.078, blue: 0.090)
-    static let panel = Color(red: 0.100, green: 0.110, blue: 0.125)
-    static let field = Color(red: 0.145, green: 0.155, blue: 0.175)
-    static let accent = Color(red: 1, green: 0.43, blue: 0.27)
-    static let secondary = Color(red: 0.58, green: 0.62, blue: 0.67)
+    static let background = Color(red: 0.065, green: 0.035, blue: 0.115)
+    static let panel = Color(red: 0.105, green: 0.065, blue: 0.175)
+    static let field = Color(red: 0.17, green: 0.11, blue: 0.26)
+    static let accent = Color(red: 0.70, green: 0.43, blue: 1)
+    static let secondary = Color(red: 0.68, green: 0.60, blue: 0.80)
 }
 
 struct ContentView: View {
@@ -26,6 +26,8 @@ struct ContentView: View {
         }
         .background(Theme.background)
         .onChange(of: model.settings) { model.render() }
+        .onChange(of: model.patternOptions) { model.render() }
+        .onChange(of: model.patternMode) { model.adjustScale() }
         .onDrop(of: [.fileURL], isTargeted: $isTargeted, perform: model.drop)
         .overlay {
             if isTargeted {
@@ -41,11 +43,11 @@ struct ContentView: View {
     private var header: some View {
         HStack(spacing: 12) {
             PixelMark().frame(width: 30, height: 30)
-            Text("pixelart").font(.system(size: 23, weight: .bold, design: .rounded))
-            Text("STUDIO").font(.system(size: 9, weight: .bold, design: .monospaced))
+            Text("JeXelart").font(.system(size: 23, weight: .bold, design: .rounded))
+            Text("CUADRO A CUADRO").font(.system(size: 9, weight: .bold, design: .monospaced))
                 .tracking(2).foregroundStyle(Theme.secondary).padding(.top, 5)
             Spacer()
-            Text("De imagen a pequeños mundos.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
+            Text("Tu imagen. Un cuadro a la vez.").font(.system(size: 12)).foregroundStyle(Theme.secondary)
             Button(action: model.openImage) { Label("Abrir imagen", systemImage: "plus") }
                 .buttonStyle(.bordered).controlSize(.large).padding(.leading, 18)
                 .help("Abrir imagen (⌘O)")
@@ -56,74 +58,81 @@ struct ContentView: View {
     private var controls: some View {
         VStack(spacing: 0) {
             ScrollView {
-            VStack(alignment: .leading, spacing: 25) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Tu imagen, píxel a píxel.").font(.system(size: 18, weight: .semibold))
-                    Text("Ajusta los detalles. Encuentra tu estilo.")
-                        .font(.system(size: 11)).foregroundStyle(Theme.secondary)
-                }
-                section("01", "LIENZO") {
-                    HStack(spacing: 10) {
-                        dimension("Ancho", value: $model.settings.width)
-                        Text("×").foregroundStyle(Theme.secondary).padding(.top, 18)
-                        dimension("Alto", value: $model.settings.height)
+                VStack(alignment: .leading, spacing: 25) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("Convierte en cuadros.").font(.system(size: 18, weight: .semibold))
+                        Text("Un color por casilla. Un patrón para crear.")
+                            .font(.system(size: 11)).foregroundStyle(Theme.secondary)
                     }
-                    if !model.settings.isValid {
-                        Text("Usa valores de 1 a 512 px por lado.").font(.caption).foregroundStyle(Theme.accent)
-                    }
-                    HStack(spacing: 6) {
-                        ForEach([16, 32, 48, 64], id: \.self) { size in
-                            Button("\(size)²") { model.settings.width = size; model.settings.height = size }
-                                .buttonStyle(.plain).font(.system(size: 11, design: .monospaced))
-                                .frame(maxWidth: .infinity).padding(.vertical, 7)
-                                .background(model.settings.width == size && model.settings.height == size ? Theme.accent.opacity(0.18) : Theme.field)
-                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                    section("01", "LIENZO") {
+                        HStack(spacing: 10) {
+                            dimension("Ancho", value: $model.settings.width)
+                            Text("×").foregroundStyle(Theme.secondary).padding(.top, 18)
+                            dimension("Alto", value: $model.settings.height)
                         }
+                        if !model.settings.isValid {
+                            Text("Usa valores de 1 a 512 px por lado.").font(.caption).foregroundStyle(Theme.accent)
+                        }
+                        HStack(spacing: 6) {
+                            ForEach([16, 32, 48, 64], id: \.self) { size in
+                                Button("\(size)²") { model.settings.width = size; model.settings.height = size }
+                                    .buttonStyle(.plain).font(.system(size: 11, design: .monospaced))
+                                    .frame(maxWidth: .infinity).padding(.vertical, 7)
+                                    .background(model.settings.width == size && model.settings.height == size ? Theme.accent.opacity(0.18) : Theme.field)
+                                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                            }
+                        }
+                        Picker("Encuadre", selection: $model.settings.fit) {
+                            ForEach(ImageFit.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }.pickerStyle(.segmented).labelsHidden()
+                        Text(fitHint).font(.system(size: 10)).foregroundStyle(Theme.secondary)
                     }
-                    Picker("Encuadre", selection: $model.settings.fit) {
-                        ForEach(ImageFit.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                    }.pickerStyle(.segmented).labelsHidden()
-                    Text(fitHint).font(.system(size: 10)).foregroundStyle(Theme.secondary)
-                }
-                divider
-                section("02", "COLOR Y ESTILO") {
-                    HStack {
-                        Text("Máximo de colores").font(.system(size: 12))
-                        Spacer()
-                        Text("\(model.settings.colorCount)").font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.accent)
+                    divider
+                    section("02", "COLOR Y ESTILO") {
+                        HStack {
+                            Text("Máximo de colores").font(.system(size: 12))
+                            Spacer()
+                            Text("\(model.settings.colorCount)").font(.system(size: 12, weight: .semibold, design: .monospaced)).foregroundStyle(Theme.accent)
+                        }
+                        Slider(value: Binding(get: { Double(model.settings.colorCount) }, set: { model.settings.colorCount = Int($0) }), in: 2...64, step: 1)
+                        HStack { Text("2 · RETRO"); Spacer(); Text("64 · DETALLE") }
+                            .font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.secondary)
+                        Toggle("Colores planos", isOn: $model.settings.flatColors).font(.system(size: 12)).padding(.top, 5)
+                        if !model.settings.flatColors {
+                            Toggle("Promediar colores", isOn: $model.settings.smooth).font(.system(size: 12))
+                        }
+                        Toggle("Tramado de color", isOn: $model.settings.dither).font(.system(size: 12))
+                        Text(model.settings.flatColors ? "Cada cuadro toma el color dominante, sin suavizar los bordes. Desactiva el tramado para bloques limpios." : "El promedio conserva los matices; el tramado crea transiciones con puntos.")
+                            .font(.system(size: 10)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+                        Toggle("Cuadrícula", isOn: $model.patternOptions.grid).font(.system(size: 12))
+                        Toggle("Coordenadas", isOn: $model.patternOptions.coordinates).font(.system(size: 12))
+                        Text("La cuadrícula y los números se incluyen al exportar el patrón.")
+                            .font(.system(size: 10)).foregroundStyle(Theme.secondary)
                     }
-                    Slider(value: Binding(get: { Double(model.settings.colorCount) }, set: { model.settings.colorCount = Int($0) }), in: 2...64, step: 1)
-                    HStack { Text("2 · RETRO"); Spacer(); Text("64 · DETALLE") }
-                        .font(.system(size: 9, design: .monospaced)).foregroundStyle(Theme.secondary)
-                    Toggle("Promediar colores", isOn: $model.settings.smooth).font(.system(size: 12)).padding(.top, 5)
-                    Toggle("Tramado de color", isOn: $model.settings.dither).font(.system(size: 12))
-                    Text("El tramado mezcla puntos para crear transiciones de color.")
-                        .font(.system(size: 10)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-            }.padding(22)
+                }.padding(22)
             }
             divider
-                section("03", "EXPORTAR") {
-                    Picker("Formato", selection: $model.exportFormat) {
-                        ForEach(ExportFormat.allCases) { Text($0.rawValue).tag($0) }
-                    }.pickerStyle(.segmented).labelsHidden()
-                    HStack {
-                        Text("Escala").font(.system(size: 12))
-                        Spacer()
-                        Picker("Escala", selection: $model.exportScale) {
-                            ForEach(1...model.maxScale, id: \.self) { Text("\($0)×").tag($0) }
-                        }.labelsHidden().frame(width: 90)
-                    }
-                    Text(model.settings.isValid ? "\(model.settings.width * model.exportScale) × \(model.settings.height * model.exportScale) px · bordes nítidos" : "Introduce dimensiones válidas")
-                        .font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.secondary)
-                    Button(action: model.export) {
-                        Label("Exportar \(model.exportFormat.rawValue)", systemImage: "square.and.arrow.down")
-                            .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 5)
-                    }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!model.canExport)
-                    Text(model.exportFormat == .jpg ? "JPG usa fondo blanco y compresión con pérdida." : "Conserva la transparencia de la imagen.")
-                        .font(.system(size: 10)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            section("03", "EXPORTAR") {
+                Picker("Formato", selection: $model.exportFormat) {
+                    ForEach(ExportFormat.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).labelsHidden()
+                HStack {
+                    Text("Tamaño del cuadro").font(.system(size: 12))
+                    Spacer()
+                    Picker("Escala", selection: $model.exportScale) {
+                        ForEach(model.minScale...model.maxScale, id: \.self) { Text("\($0) px").tag($0) }
+                    }.labelsHidden().frame(width: 90)
                 }
-                .padding(22)
+                Text(model.exportDescription)
+                    .font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.secondary)
+                Button(action: model.export) {
+                    Label("Exportar \(model.exportFormat.rawValue)", systemImage: "square.and.arrow.down")
+                        .font(.system(size: 13, weight: .semibold)).frame(maxWidth: .infinity).padding(.vertical, 5)
+                }.buttonStyle(.borderedProminent).controlSize(.large).disabled(!model.canExport)
+                Text(model.patternMode ? "Patrón sobre blanco con cuadros y coordenadas. PDF conserva las líneas vectoriales." : (model.exportFormat == .jpg ? "JPG usa fondo blanco y compresión con pérdida." : "Imagen sin papel; conserva la transparencia."))
+                    .font(.system(size: 10)).foregroundStyle(Theme.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(22)
         }.background(Theme.panel)
     }
 
@@ -134,22 +143,22 @@ struct ContentView: View {
                 Text(model.source?.name ?? "VISTA PREVIA").font(.system(size: 11, weight: .medium, design: .monospaced)).lineLimit(1)
                 Spacer()
                 if model.source != nil {
+                    Picker("Vista y exportación", selection: $model.patternMode) {
+                        Text("Patrón").tag(true)
+                        Text("Imagen").tag(false)
+                    }.pickerStyle(.segmented).frame(width: 150).labelsHidden()
                     Toggle("Original", isOn: $model.showOriginal).toggleStyle(.button)
-                    Toggle(isOn: $model.showGrid) { Image(systemName: "grid") }.toggleStyle(.button).help("Mostrar cuadrícula")
                 }
             }.foregroundStyle(Theme.secondary).padding(.horizontal, 25).padding(.vertical, 17)
             GeometryReader { geometry in
                 ZStack {
                     DotBackground()
-                    if let image = model.showOriginal ? model.original : model.preview {
-                        let ratio = model.showOriginal ? image.size.width / image.size.height : CGFloat(model.result?.width ?? 1) / CGFloat(model.result?.height ?? 1)
+                    if let image = model.displayedPreview {
+                        let ratio = image.size.width / image.size.height
                         let size = fittedSize(ratio: ratio, bounds: geometry.size)
                         ZStack {
                             Checkerboard()
                             Image(nsImage: image).interpolation(model.showOriginal ? .high : .none).resizable().aspectRatio(contentMode: .fit)
-                            if model.showGrid && !model.showOriginal, let result = model.result {
-                                PixelGrid(columns: result.width, rows: result.height)
-                            }
                         }
                         .frame(width: size.width, height: size.height)
                         .overlay(Rectangle().stroke(.white.opacity(0.16), lineWidth: 1))
@@ -165,7 +174,7 @@ struct ContentView: View {
             }.clipped()
             if let result = model.result {
                 HStack {
-                    Text(model.showOriginal ? "IMAGEN ORIGINAL" : "\(result.width) × \(result.height) PÍXELES")
+                    Text(model.showOriginal ? "IMAGEN ORIGINAL" : "\(result.width) × \(result.height) CUADROS · \(model.patternMode ? "PATRÓN" : "IMAGEN")")
                     Spacer()
                     Text("\(result.palette.count) COLORES")
                 }.font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.secondary)
@@ -178,8 +187,8 @@ struct ContentView: View {
     private var emptyState: some View {
         VStack(spacing: 16) {
             PixelMark().frame(width: 70, height: 70).padding(.bottom, 8)
-            Text("Todo empieza con una imagen.").font(.system(size: 24, weight: .semibold, design: .rounded))
-            Text("Arrastra un archivo aquí y dale una nueva resolución.")
+            Text("De imagen a patrón.").font(.system(size: 24, weight: .semibold, design: .rounded))
+            Text("Arrastra tu imagen y conviértela en una cuadrícula de colores.")
                 .font(.system(size: 13)).foregroundStyle(Theme.secondary)
             Button("Elegir imagen", action: model.openImage).buttonStyle(.borderedProminent).controlSize(.large).padding(.top, 5)
             Text("PNG · JPG · HEIC · TIFF · GIF · WEBP").font(.system(size: 9, design: .monospaced)).tracking(1).foregroundStyle(Theme.secondary)
@@ -224,7 +233,7 @@ struct ContentView: View {
             Image(systemName: "lock.shield").font(.system(size: 10))
             Text("100 % local. Tus imágenes se quedan en tu Mac.")
             Spacer()
-            Text(model.message ?? "HECHO DE PEQUEÑOS DETALLES")
+            Text(model.message ?? "JEXELART · CADA CUADRO CUENTA")
                 .lineLimit(1).foregroundStyle(model.message == nil ? Theme.secondary : Theme.accent)
         }.font(.system(size: 10)).foregroundStyle(Theme.secondary)
             .padding(.horizontal, 22).padding(.vertical, 11)
@@ -267,7 +276,7 @@ struct ContentView: View {
 }
 
 struct PixelMark: View {
-    private let cells = [0, 1, 2, 4, 6, 8, 9, 10, 12]
+    private let cells = [0, 3, 5, 6, 9, 10, 12, 15]
     var body: some View {
         GeometryReader { geo in
             let unit = geo.size.width / 4
@@ -302,25 +311,5 @@ struct Checkerboard: View {
                 }
             }
         }.clipped().accessibilityHidden(true)
-    }
-}
-
-struct PixelGrid: View {
-    let columns: Int
-    let rows: Int
-    var body: some View {
-        Canvas { context, size in
-            guard size.width / CGFloat(columns) >= 4, size.height / CGFloat(rows) >= 4 else { return }
-            var path = Path()
-            for x in 0...columns {
-                let px = CGFloat(x) * size.width / CGFloat(columns)
-                path.move(to: CGPoint(x: px, y: 0)); path.addLine(to: CGPoint(x: px, y: size.height))
-            }
-            for y in 0...rows {
-                let py = CGFloat(y) * size.height / CGFloat(rows)
-                path.move(to: CGPoint(x: 0, y: py)); path.addLine(to: CGPoint(x: size.width, y: py))
-            }
-            context.stroke(path, with: .color(.black.opacity(0.22)), lineWidth: 0.5)
-        }.allowsHitTesting(false).accessibilityHidden(true)
     }
 }
