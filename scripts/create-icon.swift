@@ -1,0 +1,24 @@
+import AppKit
+
+let directory = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("Pixelart.iconset")
+try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+for (name, size) in [("icon_16x16", 16), ("icon_16x16@2x", 32), ("icon_32x32", 32),
+                     ("icon_32x32@2x", 64), ("icon_128x128", 128), ("icon_128x128@2x", 256),
+                     ("icon_256x256", 256), ("icon_256x256@2x", 512), ("icon_512x512", 512), ("icon_512x512@2x", 1024)] {
+    let image = NSImage(size: NSSize(width: size, height: size))
+    image.lockFocus()
+    let s = CGFloat(size)
+    NSColor(srgbRed: 0.07, green: 0.078, blue: 0.09, alpha: 1).setFill()
+    NSBezierPath(roundedRect: NSRect(x: s * 0.05, y: s * 0.05, width: s * 0.9, height: s * 0.9), xRadius: s * 0.2, yRadius: s * 0.2).fill()
+    let unit = s * 0.145, origin = s * 0.21
+    for index in [0, 1, 2, 4, 6, 8, 9, 10, 12] {
+        NSColor(srgbRed: 1, green: 0.43, blue: 0.27, alpha: index == 12 ? 0.4 : 1).setFill()
+        NSRect(x: origin + CGFloat(index % 4) * unit, y: s - origin - CGFloat(index / 4 + 1) * unit,
+               width: unit * 0.9, height: unit * 0.9).fill()
+    }
+    image.unlockFocus()
+    guard let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else {
+        fatalError("No se pudo generar el icono")
+    }
+    try png.write(to: directory.appendingPathComponent("\(name).png"))
+}
